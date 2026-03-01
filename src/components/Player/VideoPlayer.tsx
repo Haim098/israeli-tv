@@ -1,0 +1,200 @@
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import Hls from 'hls.js'
+import type { Channel } from '../../types'
+import { useTvStore } from '../../stores/tvStore'
+
+interface VideoPlayerProps {
+  channel: Channel
+  onFallbackToIframe?: (url: string) => void
+}
+
+export interface VideoPlayerHandle {
+  getVideo: () => HTMLVideoElement | null
+  play: () => void
+  pause: () => void
+  togglePlay: () => void
+  isPlaying: () => boolean
+}
+
+export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
+  function VideoPlayer({ channel, onFallbackToIframe }, ref) {
+    const videoRef = useRef<HTMLVideoElement>(null)
+    const hlsRef = useRef<Hls | null>(null)
+    const setLoading = useTvStore((s) => s.setLoading)
+    const setError = useTvStore((s) => s.setError)
+
+    useImperativeHandle(ref, () => ({
+      getVideo: () => videoRef.current,
+      play: () => { videoRef.current?.play() },
+      pause: () => { videoRef.current?.pause() },
+      togglePlay: () => {
+        const v = videoRef.current
+        if (!v) return
+        v.paused ? v.play() : v.pause()
+      },
+      isPlaying: () => !videoRef.current?.paused,
+    }))
+
+    const loadStream = useCallback((url: string) => {
+      const video = videoRef.current
+      if (!video) return
+
+      // Cleanup previous instance
+      if (hlsRef.current) {
+        hlsRef.current.destroy()
+        hlsRef.current = null
+      }
+
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 30,
+        })
+        hlsRef.current = hls
+
+        hls.loadSource(url)
+        hls.attachMedia(video)
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setLoading(false)
+          video.play().catch(() => {})
+        })
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                // For dynamic-URL channels, re-resolve (token may have expired)
+                if (channel.resolveUrl) {
+                  console.warn('Network error on dynamic stream, re-resolving URL...')
+                  hls.destroy()
+                  channel.resolveUrl().then((freshUrl) => {
+                    loadStream(freshUrl)
+                  }).catch(() => {
+                    if (channel.fallbackUrl) {
+                      onFallbackToIframe?.(channel.fallbackUrl)
+                    } else {
+                      setError('שגיאה בטעינת השידור')
+                    }
+                  })
+                  return
+                }
+                // Try fallback URL
+                if (channel.fallbackUrl && url !== channel.fallbackUrl) {
+                  console.warn('Primary URL failed, trying fallback...')
+                  if (!channel.fallbackUrl.endsWith('.m3u8')) {
+                    // Fallback is an iframe URL
+                    hls.destroy()
+                    onFallbackToIframe?.(channel.fallbackUrl)
+                    return
+                  }
+                  loadStream(channel.fallbackUrl)
+                  return
+                }
+                hls.startLoad()
+                break
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError()
+                break
+              default:
+                setError('שגיאה בטעינת השידור')
+                hls.destroy()
+                break
+            }
+          }
+        })
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // iOS Safari — native HLS
+        video.src = url
+        video.addEventListener('loadedmetadata', () => {
+          setLoading(false)
+          video.play().catch(() => {})
+        }, { once: true })
+
+        video.addEventListener('error', () => {
+          if (channel.fallbackUrl && url !== channel.fallbackUrl) {
+            if (!channel.fallbackUrl.endsWith('.m3u8')) {
+              onFallbackToIframe?.(channel.fallbackUrl)
+              return
+            }
+            loadStream(channel.fallbackUrl)
+          } else {
+            setError('שגיאה בטעינת השידור')
+          }
+        }, { once: true })
+      } else {
+        setError('הדפדפן אינו תומך בהפעלת וידאו')
+      }
+    }, [channel.fallbackUrl, setLoading, setError, onFallbackToIframe])
+
+    // Load stream on channel change — resolve dynamic URL if needed
+    useEffect(() => {
+      let cancelled = false
+      setLoading(true)
+
+      if (channel.resolveUrl) {
+        channel.resolveUrl().then((url) => {
+          if (!cancelled) loadStream(url)
+        }).catch((err) => {
+          if (!cancelled) {
+            console.error('Failed to resolve stream URL:', err)
+            // Fall back to iframe URL if available
+            if (channel.fallbackUrl) {
+              onFallbackToIframe?.(channel.fallbackUrl)
+            } else {
+              setError('שגיאה בטעינת השידור')
+            }
+          }
+        })
+      } else {
+        loadStream(channel.streamUrl)
+      }
+
+      return () => {
+        cancelled = true
+        if (hlsRef.current) {
+          hlsRef.current.destroy()
+          hlsRef.current = null
+        }
+      }
+    }, [channel.id, channel.streamUrl, channel.resolveUrl, channel.fallbackUrl, loadStream, setLoading, setError, onFallbackToIframe])
+
+    // Re-sync to live edge on visibility change
+    useEffect(() => {
+      const onVisibility = () => {
+        if (document.visibilityState === 'visible' && videoRef.current) {
+          const video = videoRef.current
+          const hls = hlsRef.current
+          if (hls) {
+            // Seek to live edge
+            const liveSyncPosition = hls.liveSyncPosition
+            if (liveSyncPosition != null) {
+              video.currentTime = liveSyncPosition
+            }
+          } else if (video.duration === Infinity) {
+            // Native HLS: seek to end to get live
+            video.currentTime = video.seekable.length > 0
+              ? video.seekable.end(video.seekable.length - 1)
+              : video.duration
+          }
+          video.play().catch(() => {})
+        }
+      }
+      document.addEventListener('visibilitychange', onVisibility)
+      return () => document.removeEventListener('visibilitychange', onVisibility)
+    }, [])
+
+    return (
+      <video
+        ref={videoRef}
+        className="h-full w-full object-contain bg-black"
+        playsInline
+        // @ts-ignore webkit-playsinline is a non-standard attribute
+        webkit-playsinline=""
+        autoPlay
+        muted={false}
+      />
+    )
+  },
+)

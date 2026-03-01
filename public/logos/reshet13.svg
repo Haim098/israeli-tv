@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <rect width="120" height="120" rx="16" fill="#ff6600"/>
+  <text x="60" y="52" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="26" font-weight="700">רשת</text>
+  <text x="60" y="85" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="36" font-weight="800">13</text>
+</svg>

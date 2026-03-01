@@ -1,0 +1,55 @@
+import type { Channel } from '../types'
+import { getKeshet12Url } from '../lib/keshet12'
+
+export const channels: Channel[] = [
+  {
+    id: 'kan11',
+    name: 'כאן 11',
+    number: 11,
+    streamUrl: 'https://r.il.cdn-redge.media/livehls/oil/kancdn-live/live/kan11/live.livx/playlist.m3u8',
+    fallbackUrl: 'https://www.kan.org.il/live',
+    type: 'hls',
+    logo: '/logos/kan11.png',
+    color: '#0066cc',
+  },
+  {
+    id: 'keshet12',
+    name: 'קשת 12',
+    number: 12,
+    streamUrl: 'https://www.mako.co.il/mako-vod-live-tv/VOD-6540b8dcb64fd31006.htm',
+    fallbackUrl: 'https://www.mako.co.il/mako-vod-live-tv/VOD-6540b8dcb64fd31006.htm',
+    type: 'hls',
+    logo: '/logos/keshet12.jpg',
+    color: '#e6007e',
+    resolveUrl: getKeshet12Url,
+  },
+  {
+    id: 'reshet13',
+    name: 'רשת 13',
+    number: 13,
+    streamUrl: 'https://cdnapisec.kaltura.com/p/2748741/sp/2748741/playManifest/entryId/1_ufpwi64o/deliveryProfileId/672/protocol/https/format/applehttp/a.m3u8',
+    fallbackUrl: 'https://13tv.co.il/live/',
+    type: 'hls',
+    logo: '/logos/reshet13.png',
+    color: '#ff6600',
+  },
+  {
+    id: 'channel14',
+    name: 'ערוץ 14',
+    number: 14,
+    streamUrl: 'https://r.il.cdn-redge.media/livehls/oil/ch14/live/ch14/live.livx/playlist.m3u8',
+    type: 'hls',
+    logo: '/logos/channel14.png',
+    color: '#cc0000',
+  },
+  {
+    id: 'knesset',
+    name: 'ערוץ הכנסת',
+    number: 99,
+    streamUrl: 'https://contact.gostreaming.tv/Knesset/myStream/playlist.m3u8',
+    fallbackUrl: 'https://kneset.gostreaming.tv/p2-kneset/_definst_/myStream/playlist.m3u8',
+    type: 'hls',
+    logo: '/logos/knesset.png',
+    color: '#1a5276',
+  },
+]

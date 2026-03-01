@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #121212;
+  --color-surface-light: #1e1e1e;
+  --color-surface-lighter: #2a2a2a;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Hide default video controls when custom controls shown */
+video::-webkit-media-controls {
+  display: none !important;
+}
+
+/* Active channel glow */
+.channel-active-glow {
+  box-shadow: 0 0 20px var(--glow-color, rgba(255,255,255,0.3));
+}
+
+/* Scrollbar hide for mobile feel */
+::-webkit-scrollbar {
+  display: none;
+}
+* {
+  scrollbar-width: none;
+}
