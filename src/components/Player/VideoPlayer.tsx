@@ -19,20 +19,31 @@ export interface VideoPlayerHandle {
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   function VideoPlayer({ channel, onFallbackToIframe }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null)
+    const audioRef = useRef<HTMLAudioElement>(null)
     const hlsRef = useRef<Hls | null>(null)
+    const isSwappedRef = useRef(false)
     const setLoading = useTvStore((s) => s.setLoading)
     const setError = useTvStore((s) => s.setError)
 
     useImperativeHandle(ref, () => ({
       getVideo: () => videoRef.current,
-      play: () => { videoRef.current?.play() },
-      pause: () => { videoRef.current?.pause() },
-      togglePlay: () => {
-        const v = videoRef.current
-        if (!v) return
-        v.paused ? v.play() : v.pause()
+      play: () => {
+        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        el?.play()
       },
-      isPlaying: () => !videoRef.current?.paused,
+      pause: () => {
+        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        el?.pause()
+      },
+      togglePlay: () => {
+        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        if (!el) return
+        el.paused ? el.play() : el.pause()
+      },
+      isPlaying: () => {
+        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        return !el?.paused
+      },
     }))
 
     const loadStream = useCallback((url: string) => {
@@ -160,41 +171,92 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
     }, [channel.id, channel.streamUrl, channel.resolveUrl, channel.fallbackUrl, loadStream, setLoading, setError, onFallbackToIframe])
 
-    // Re-sync to live edge on visibility change
+    // Background playback: auto-PiP first, fall back to audio swap
     useEffect(() => {
+      const swapToAudio = () => {
+        const hls = hlsRef.current
+        const audio = audioRef.current
+        if (!hls || !audio || isSwappedRef.current) return
+        hls.detachMedia()
+        hls.attachMedia(audio)
+        audio.play().catch(() => {})
+        isSwappedRef.current = true
+      }
+
       const onVisibility = () => {
-        if (document.visibilityState === 'visible' && videoRef.current) {
-          const video = videoRef.current
-          const hls = hlsRef.current
-          if (hls) {
-            // Seek to live edge
-            const liveSyncPosition = hls.liveSyncPosition
-            if (liveSyncPosition != null) {
-              video.currentTime = liveSyncPosition
-            }
-          } else if (video.duration === Infinity) {
-            // Native HLS: seek to end to get live
-            video.currentTime = video.seekable.length > 0
-              ? video.seekable.end(video.seekable.length - 1)
-              : video.duration
+        const video = videoRef.current
+        const audio = audioRef.current
+        const hls = hlsRef.current
+
+        if (document.visibilityState === 'hidden' && video) {
+          // Try auto Picture-in-Picture first (keeps video in floating window)
+          if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+            video.requestPictureInPicture().catch(swapToAudio)
+          } else {
+            swapToAudio()
           }
-          video.play().catch(() => {})
+        } else if (document.visibilityState === 'visible' && video) {
+          // Exit PiP if active
+          if (document.pictureInPictureElement) {
+            document.exitPictureInPicture().catch(() => {})
+          }
+
+          if (isSwappedRef.current && hls && audio) {
+            // Swap back from audio to video
+            const wasPaused = audio.paused
+            audio.pause()
+            hls.detachMedia()
+            hls.attachMedia(video)
+            isSwappedRef.current = false
+            video.addEventListener('canplay', () => {
+              const pos = hls.liveSyncPosition
+              if (pos != null) video.currentTime = pos
+              if (!wasPaused) video.play().catch(() => {})
+            }, { once: true })
+          } else {
+            // Not swapped (was in PiP or native HLS) — seek to live edge
+            if (hls) {
+              const pos = hls.liveSyncPosition
+              if (pos != null) video.currentTime = pos
+            } else if (video.duration === Infinity) {
+              video.currentTime = video.seekable.length > 0
+                ? video.seekable.end(video.seekable.length - 1)
+                : video.duration
+            }
+            video.play().catch(() => {})
+          }
         }
       }
+
+      // If PiP closes while still in background, fall back to audio
+      const onLeavePiP = () => {
+        if (document.visibilityState === 'hidden') swapToAudio()
+      }
+
+      const video = videoRef.current
       document.addEventListener('visibilitychange', onVisibility)
-      return () => document.removeEventListener('visibilitychange', onVisibility)
+      video?.addEventListener('leavepictureinpicture', onLeavePiP)
+      return () => {
+        document.removeEventListener('visibilitychange', onVisibility)
+        video?.removeEventListener('leavepictureinpicture', onLeavePiP)
+      }
     }, [])
 
     return (
-      <video
-        ref={videoRef}
-        className="h-full w-full object-contain bg-black"
-        playsInline
-        // @ts-ignore webkit-playsinline is a non-standard attribute
-        webkit-playsinline=""
-        autoPlay
-        muted={false}
-      />
+      <>
+        <video
+          ref={videoRef}
+          className="h-full w-full object-contain bg-black"
+          playsInline
+          // @ts-ignore non-standard attributes
+          webkit-playsinline=""
+          autoPlay
+          muted={false}
+          // @ts-ignore autopictureinpicture is not yet in TS types
+          autopictureinpicture=""
+        />
+        <audio ref={audioRef} hidden />
+      </>
     )
   },
 )

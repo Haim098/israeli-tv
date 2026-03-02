@@ -117,9 +117,8 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
           className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
           aria-label="מסך מלא"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-            <path fillRule="evenodd" d="M4.5 5.653c0-.352.183-.669.48-.843l5.25-2.94a.75.75 0 01.74 0l5.25 2.94c.297.174.48.49.48.843V12a.75.75 0 01-1.5 0V6.19L11 3.474 6.75 5.85v5.4a.75.75 0 01-1.5 0V5.653z" clipRule="evenodd" />
-            <path d="M2.25 4.5a.75.75 0 01.75-.75h3a.75.75 0 010 1.5H4.5v1.5a.75.75 0 01-1.5 0v-2.25zM17.25 3.75a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V5.25h-1.5a.75.75 0 010-1.5h2.25zM2.25 19.5a.75.75 0 01.75-.75h2.25a.75.75 0 010 1.5H4.5v-1.5a.75.75 0 01-1.5 0v2.25h3a.75.75 0 010 0zM21 18.75a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5h1.5v-1.5a.75.75 0 011.5 0v2.25z" />
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+            <path d="M3 8V5a2 2 0 012-2h3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M21 16v3a2 2 0 01-2 2h-3" />
           </svg>
         </button>
       </div>
