@@ -1,5 +1,6 @@
 import type { Channel } from '../types'
 import { getKeshet12Url } from '../lib/keshet12'
+import { getI24NewsUrl } from '../lib/i24news'
 
 export const channels: Channel[] = [
   {
@@ -41,6 +42,17 @@ export const channels: Channel[] = [
     type: 'hls',
     logo: '/logos/channel14.png',
     color: '#cc0000',
+  },
+  {
+    id: 'i24news',
+    name: 'i24 NEWS',
+    number: 24,
+    streamUrl: 'https://video.i24news.tv/live',
+    fallbackUrl: 'https://video.i24news.tv/live',
+    type: 'hls',
+    logo: '/logos/i24news.jpg',
+    color: '#00a0e3',
+    resolveUrl: getI24NewsUrl,
   },
   {
     id: 'knesset',
