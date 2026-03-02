@@ -28,7 +28,7 @@ export const channels: Channel[] = [
     id: 'reshet13',
     name: 'רשת 13',
     number: 13,
-    streamUrl: 'https://d2xg1g9o5vns8m.cloudfront.net/out/v1/0855d703f7d5436fae6a9c7ce8ca5075/index.m3u8',
+    streamUrl: 'https://dsk76kvc9kie6.cloudfront.net/media/87f59c77-03f6-4bad-a648-897e095e7360/mainManifest.m3u8',
     fallbackUrl: 'https://13tv.co.il/live/',
     type: 'hls',
     logo: '/logos/reshet13.png',
