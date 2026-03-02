@@ -27,7 +27,7 @@ export const channels: Channel[] = [
     id: 'reshet13',
     name: 'רשת 13',
     number: 13,
-    streamUrl: 'https://cdnapisec.kaltura.com/p/2748741/sp/2748741/playManifest/entryId/1_ufpwi64o/deliveryProfileId/672/protocol/https/format/applehttp/a.m3u8',
+    streamUrl: 'https://reshet.g-mana.live/media/4607e158-e4d4-4e18-9160-3dc3ea9bc677/mainManifest.m3u8',
     fallbackUrl: 'https://13tv.co.il/live/',
     type: 'hls',
     logo: '/logos/reshet13.png',
