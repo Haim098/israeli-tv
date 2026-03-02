@@ -61,6 +61,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           enableWorker: true,
           lowLatencyMode: true,
           backBufferLength: 30,
+          liveDurationInfinity: true,
         })
         hlsRef.current = hls
 
@@ -70,16 +71,13 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setLoading(false)
           video.play().catch(() => {})
-          // Some live streams have large DVR windows — seek to live edge once seekable ranges are ready
+          // DVR streams may start far behind live — seek to live edge once seekable ranges are ready
           video.addEventListener('timeupdate', function seekToLive() {
-            // Wait until seekable ranges are populated
             if (video.seekable.length === 0) return
             video.removeEventListener('timeupdate', seekToLive)
-            if (video.duration === Infinity) {
-              const liveEdge = video.seekable.end(video.seekable.length - 1)
-              if (liveEdge - video.currentTime > 10) {
-                video.currentTime = liveEdge - 2
-              }
+            const liveEdge = video.seekable.end(video.seekable.length - 1)
+            if (liveEdge - video.currentTime > 10) {
+              video.currentTime = liveEdge - 2
             }
           })
         })
