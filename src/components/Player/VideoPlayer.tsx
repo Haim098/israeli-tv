@@ -70,6 +70,16 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setLoading(false)
           video.play().catch(() => {})
+          // Some live streams have large DVR windows — seek to live edge once playback starts
+          video.addEventListener('timeupdate', function seekOnce() {
+            video.removeEventListener('timeupdate', seekOnce)
+            if (video.seekable.length > 0 && video.duration === Infinity) {
+              const liveEdge = video.seekable.end(video.seekable.length - 1)
+              if (liveEdge - video.currentTime > 10) {
+                video.currentTime = liveEdge - 2
+              }
+            }
+          })
         })
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
