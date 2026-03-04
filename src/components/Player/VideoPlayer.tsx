@@ -14,6 +14,10 @@ export interface VideoPlayerHandle {
   pause: () => void
   togglePlay: () => void
   isPlaying: () => boolean
+  seekTo: (time: number) => void
+  getCurrentTime: () => number
+  getSeekableRange: () => { start: number; end: number } | null
+  getLiveSyncPosition: () => number | null
 }
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
@@ -44,6 +48,20 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const el = isSwappedRef.current ? audioRef.current : videoRef.current
         return !el?.paused
       },
+      seekTo: (time: number) => {
+        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        if (el) el.currentTime = time
+      },
+      getCurrentTime: () => {
+        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        return el?.currentTime ?? 0
+      },
+      getSeekableRange: () => {
+        const video = videoRef.current
+        if (!video || video.seekable.length === 0) return null
+        return { start: video.seekable.start(0), end: video.seekable.end(0) }
+      },
+      getLiveSyncPosition: () => hlsRef.current?.liveSyncPosition ?? null,
     }))
 
     const loadStream = useCallback((url: string) => {
