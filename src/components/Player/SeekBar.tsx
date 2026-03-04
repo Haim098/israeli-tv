@@ -5,22 +5,11 @@ interface SeekBarProps {
   playerRef: React.RefObject<VideoPlayerHandle | null>
 }
 
-function formatTimeBehind(seconds: number): string {
-  const s = Math.round(seconds)
-  if (s < 60) return `-${s}s`
-  const mins = Math.floor(s / 60)
-  const secs = s % 60
-  return `-${mins}:${secs.toString().padStart(2, '0')}`
-}
-
-const LIVE_THRESHOLD_SEC = 10
 const MIN_DVR_SEC = 30
 
 export function SeekBar({ playerRef }: SeekBarProps) {
-  const [currentTime, setCurrentTime] = useState(0)
   const [seekableStart, setSeekableStart] = useState(0)
   const [seekableEnd, setSeekableEnd] = useState(0)
-  const [liveSyncPos, setLiveSyncPos] = useState<number | null>(null)
   const isDraggingRef = useRef(false)
   const [sliderValue, setSliderValue] = useState(0)
 
@@ -31,10 +20,7 @@ export function SeekBar({ playerRef }: SeekBarProps) {
 
     const time = handle.getCurrentTime()
     const range = handle.getSeekableRange()
-    const livePos = handle.getLiveSyncPosition()
 
-    setCurrentTime(time)
-    setLiveSyncPos(livePos)
     if (range) {
       setSeekableStart(range.start)
       setSeekableEnd(range.end)
@@ -54,24 +40,11 @@ export function SeekBar({ playerRef }: SeekBarProps) {
   }, [playerRef, updateState])
 
   const duration = seekableEnd - seekableStart
-  const liveEdge = liveSyncPos ?? seekableEnd
-  const timeBehind = liveEdge - currentTime
-  const isAtLive = timeBehind < LIVE_THRESHOLD_SEC
 
   // Don't show seekbar if DVR window is too small
   if (duration < MIN_DVR_SEC) return null
 
   const sliderPercent = duration > 0 ? Math.min(100, (sliderValue / duration) * 100) : 100
-
-  const goLive = () => {
-    const handle = playerRef.current
-    if (!handle) return
-    const livePos = handle.getLiveSyncPosition()
-    const range = handle.getSeekableRange()
-    const target = livePos ?? (range?.end ?? 0)
-    handle.seekTo(target)
-    handle.play()
-  }
 
   const handleMouseDown = () => {
     isDraggingRef.current = true
@@ -80,7 +53,6 @@ export function SeekBar({ playerRef }: SeekBarProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value)
     setSliderValue(val)
-    setCurrentTime(seekableStart + val)
   }
 
   const handleCommit = () => {
@@ -108,23 +80,6 @@ export function SeekBar({ playerRef }: SeekBarProps) {
         aria-label="ציר הזמן"
       />
 
-      {!isAtLive && (
-        <span className="shrink-0 text-xs text-white/50 tabular-nums">
-          {formatTimeBehind(timeBehind)}
-        </span>
-      )}
-
-      <button
-        onClick={goLive}
-        className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold transition ${
-          isAtLive
-            ? 'bg-red-600 text-white'
-            : 'bg-white/10 text-red-400 ring-1 ring-red-500/50 hover:bg-red-600 hover:text-white'
-        }`}
-        aria-label="עבור לשידור חי"
-      >
-        חי ▶
-      </button>
     </div>
   )
 }

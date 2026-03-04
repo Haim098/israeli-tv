@@ -14,6 +14,7 @@ interface PlayerControlsProps {
 export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, isPiP }: PlayerControlsProps) {
   const [isPlaying, setIsPlaying] = useState(true)
   const [isMuted, setIsMuted] = useState(false)
+  const [isAtLive, setIsAtLive] = useState(true)
 
   const syncState = useCallback(() => {
     const video = playerRef.current?.getVideo()
@@ -23,13 +24,37 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
     }
   }, [playerRef])
 
+  const syncLiveState = useCallback(() => {
+    const handle = playerRef.current
+    if (!handle) return
+    const livePos = handle.getLiveSyncPosition()
+    const range = handle.getSeekableRange()
+    const liveEdge = livePos ?? (range?.end ?? 0)
+    const behind = liveEdge - handle.getCurrentTime()
+    setIsAtLive(behind < 10)
+  }, [playerRef])
+
+  const goLive = useCallback(() => {
+    const handle = playerRef.current
+    if (!handle) return
+    const livePos = handle.getLiveSyncPosition()
+    const range = handle.getSeekableRange()
+    const target = livePos ?? (range?.end ?? 0)
+    handle.seekTo(target)
+    handle.play()
+  }, [playerRef])
+
   useEffect(() => {
     const video = playerRef.current?.getVideo()
     if (!video) return
     const events = ['play', 'pause', 'volumechange'] as const
     events.forEach((e) => video.addEventListener(e, syncState))
-    return () => events.forEach((e) => video.removeEventListener(e, syncState))
-  }, [playerRef, syncState])
+    video.addEventListener('timeupdate', syncLiveState)
+    return () => {
+      events.forEach((e) => video.removeEventListener(e, syncState))
+      video.removeEventListener('timeupdate', syncLiveState)
+    }
+  }, [playerRef, syncState, syncLiveState])
 
   const togglePlay = () => playerRef.current?.togglePlay()
 
@@ -59,7 +84,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
 
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2">
-          <LiveBadge />
+          <LiveBadge isAtLive={isAtLive} onGoLive={goLive} />
         </div>
 
         <div className="flex items-center gap-1">
