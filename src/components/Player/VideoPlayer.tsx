@@ -78,10 +78,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          backBufferLength: 15,
+          backBufferLength: 300,
           liveDurationInfinity: true,
           liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 5,
         })
         hlsRef.current = hls
 

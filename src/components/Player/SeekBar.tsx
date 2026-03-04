@@ -114,15 +114,17 @@ export function SeekBar({ playerRef }: SeekBarProps) {
         </span>
       )}
 
-      {!isAtLive && (
-        <button
-          onClick={goLive}
-          className="shrink-0 rounded-md bg-red-600/90 px-2 py-0.5 text-xs font-bold text-white transition hover:bg-red-600"
-          aria-label="עבור לשידור חי"
-        >
-          חי ▶
-        </button>
-      )}
+      <button
+        onClick={goLive}
+        className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold transition ${
+          isAtLive
+            ? 'bg-red-600 text-white'
+            : 'bg-white/10 text-red-400 ring-1 ring-red-500/50 hover:bg-red-600 hover:text-white'
+        }`}
+        aria-label="עבור לשידור חי"
+      >
+        חי ▶
+      </button>
     </div>
   )
 }
