@@ -10,6 +10,8 @@ import { useMediaSession } from '../../hooks/useMediaSession'
 import { useWakeLock } from '../../hooks/useWakeLock'
 import type { Channel } from '../../types'
 
+const CONTROLS_TIMEOUT = 3000
+
 export function PlayerContainer() {
   const currentChannel = useTvStore((s) => s.currentChannel)
   const isLoading = useTvStore((s) => s.isLoading)
@@ -19,6 +21,22 @@ export function PlayerContainer() {
 
   // When HLS fails and fallback is an iframe URL, override to iframe mode
   const [iframeFallback, setIframeFallback] = useState<{ channelId: string; url: string } | null>(null)
+
+  // Auto-hide controls
+  const [showControls, setShowControls] = useState(true)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true)
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = setTimeout(() => setShowControls(false), CONTROLS_TIMEOUT)
+  }, [])
+
+  // Start the initial hide timer
+  useEffect(() => {
+    resetControlsTimer()
+    return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }
+  }, [resetControlsTimer])
 
   // Clear iframe fallback when channel changes
   useEffect(() => {
@@ -66,52 +84,60 @@ export function PlayerContainer() {
     : null
 
   return (
-    <div className="flex flex-col">
-      {/* Video area with 16:9 aspect ratio */}
-      <div className="player-container relative aspect-video w-full overflow-hidden rounded-xl bg-black">
-        {isHls ? (
-          <VideoPlayer
-            ref={playerRef}
-            channel={currentChannel}
-            onFallbackToIframe={onFallbackToIframe}
-          />
-        ) : (
-          <IframePlayer channel={iframeChannel!} />
-        )}
+    <div
+      className="player-container relative aspect-video w-full overflow-hidden rounded-xl bg-black"
+      onMouseMove={resetControlsTimer}
+      onTouchStart={resetControlsTimer}
+      onClick={resetControlsTimer}
+    >
+      {isHls ? (
+        <VideoPlayer
+          ref={playerRef}
+          channel={currentChannel}
+          onFallbackToIframe={onFallbackToIframe}
+        />
+      ) : (
+        <IframePlayer channel={iframeChannel!} />
+      )}
 
-        {/* Loading overlay */}
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-            <Spinner />
-          </div>
-        )}
+      {/* Loading overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+          <Spinner />
+        </div>
+      )}
 
-        {/* Error overlay */}
-        {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80">
-            <p className="text-sm text-red-400">{error}</p>
-            <button
-              onClick={() => {
-                setIframeFallback(null)
-                useTvStore.getState().setError(null)
-                useTvStore.getState().setChannel(currentChannel)
-              }}
-              className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/20"
-            >
-              נסה שוב
-            </button>
-          </div>
-        )}
+      {/* Error overlay */}
+      {error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80">
+          <p className="text-sm text-red-400">{error}</p>
+          <button
+            onClick={() => {
+              setIframeFallback(null)
+              useTvStore.getState().setError(null)
+              useTvStore.getState().setChannel(currentChannel)
+            }}
+            className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/20"
+          >
+            נסה שוב
+          </button>
+        </div>
+      )}
+
+      {/* Controls overlay */}
+      <div
+        className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-8 transition-opacity duration-300 ${
+          showControls ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+      >
+        <PlayerControls
+          playerRef={playerRef}
+          isHls={isHls}
+          isPiPSupported={isPiPSupported && isHls}
+          onPiPToggle={togglePiP}
+          isPiP={isPiP}
+        />
       </div>
-
-      {/* Controls */}
-      <PlayerControls
-        playerRef={playerRef}
-        isHls={isHls}
-        isPiPSupported={isPiPSupported && isHls}
-        onPiPToggle={togglePiP}
-        isPiP={isPiP}
-      />
     </div>
   )
 }
