@@ -34,3 +34,32 @@ video::-webkit-media-controls {
 * {
   scrollbar-width: none;
 }
+
+/* Seek bar (DVR timeline) */
+.seek-bar {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  outline: none;
+}
+.seek-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.4);
+}
+.seek-bar::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.4);
+}

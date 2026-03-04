@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { LiveBadge } from './LiveBadge'
+import { SeekBar } from './SeekBar'
 import type { VideoPlayerHandle } from './VideoPlayer'
 
 interface PlayerControlsProps {
@@ -52,7 +53,11 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
   }
 
   return (
-    <div className="flex items-center justify-between px-3 py-2">
+    <div className="flex flex-col">
+      {/* Timeline / seek bar – HLS streams with DVR window only */}
+      {isHls && <SeekBar playerRef={playerRef} />}
+
+      <div className="flex items-center justify-between px-3 py-2">
       <div className="flex items-center gap-2">
         <LiveBadge />
       </div>
@@ -122,6 +127,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
           </svg>
         </button>
       </div>
+    </div>
     </div>
   )
 }
