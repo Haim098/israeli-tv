@@ -58,6 +58,17 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
 
   const togglePlay = () => playerRef.current?.togglePlay()
 
+  const skip = (seconds: number) => {
+    const handle = playerRef.current
+    if (!handle) return
+    const range = handle.getSeekableRange()
+    const current = handle.getCurrentTime()
+    const target = range
+      ? Math.max(range.start, Math.min(current + seconds, range.end))
+      : current + seconds
+    handle.seekTo(target)
+  }
+
   const toggleMute = () => {
     const video = playerRef.current?.getVideo()
     if (video) {
@@ -90,6 +101,18 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
         <div className="flex items-center gap-1">
           {isHls && (
             <>
+              {/* Rewind 10s */}
+              <button
+                onClick={() => skip(-10)}
+                className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+                aria-label="אחורה 10 שניות"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                  <path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+                  <text x="8.5" y="15.5" fontSize="5.5" fontWeight="bold" textAnchor="middle" fill="currentColor" aria-hidden="true">10</text>
+                </svg>
+              </button>
+
               {/* Play/Pause */}
               <button
                 onClick={togglePlay}
@@ -105,6 +128,18 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
                     <path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clipRule="evenodd" />
                   </svg>
                 )}
+              </button>
+
+              {/* Forward 10s */}
+              <button
+                onClick={() => skip(10)}
+                className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+                aria-label="קדימה 10 שניות"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                  <path d="M12.01 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/>
+                  <text x="15.5" y="15.5" fontSize="5.5" fontWeight="bold" textAnchor="middle" fill="currentColor" aria-hidden="true">10</text>
+                </svg>
               </button>
 
               {/* Mute */}
