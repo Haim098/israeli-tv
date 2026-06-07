@@ -8,6 +8,8 @@
  * 4. Combining the base stream URL with the token
  */
 
+import { fetchWithTimeout } from './fetchUtils'
+
 // --- AES-192-CBC implementation (Web Crypto doesn't support AES-192) ---
 
 const SBOX = new Uint8Array([
@@ -154,18 +156,42 @@ interface Keshet12Result {
 }
 
 let cached: Keshet12Result | null = null
+let inFlight: Promise<string> | null = null
 
-export async function getKeshet12Url(): Promise<string> {
+export async function getKeshet12Url(force = false): Promise<string> {
   // Return cached URL if still valid (with 60s buffer)
-  if (cached && cached.expiresAt > Date.now() + 60_000) {
+  if (!force && cached && cached.expiresAt > Date.now() + 60_000) {
     return cached.url
   }
+  // De-dupe concurrent resolutions so we don't hammer mako with parallel
+  // playlist + token requests (and don't burn through device IDs).
+  if (inFlight) return inFlight
+  inFlight = resolveKeshet12().finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
 
+async function resolveKeshet12(): Promise<string> {
+  try {
+    return await doResolveKeshet12()
+  } catch (err) {
+    // Invalidate the cache on failure so a re-resolve doesn't keep returning
+    // a stale/rejected token in a tight loop.
+    cached = null
+    throw err
+  }
+}
+
+async function doResolveKeshet12(): Promise<string> {
   // Step 1: Fetch and decrypt playlist
-  const playlistResp = await fetch(
+  const playlistResp = await fetchWithTimeout(
     `https://www.mako.co.il/AjaxPage?jspName=playlist12.jsp&vcmid=${VCM_ID}&videoChannelId=${VIDEO_CHANNEL_ID}&galleryChannelId=${VCM_ID}&consumer=responsive`
   )
   const playlistEncrypted = (await playlistResp.text()).trim()
+  if (!playlistEncrypted || playlistEncrypted.startsWith('<')) {
+    throw new Error('Keshet 12 playlist returned HTML (geo-block or bot protection)')
+  }
   const playlist = JSON.parse(decrypt(playlistEncrypted, PLAYLIST_KEY))
 
   // The entitlements API issues an AKAMAI (hdnea) ticket, which only validates
@@ -173,6 +199,9 @@ export async function getKeshet12Url(): Promise<string> {
   // Akamai token is rejected there ("missing token in querystring" → 403).
   // CloudFront also omits CORS headers. So always use the akamaized.net entry.
   const media: Array<{ url: string }> = playlist.media
+  if (!Array.isArray(media) || media.length === 0) {
+    throw new Error('Keshet 12 playlist contained no media entries')
+  }
   const akamaiMedia = media.find((m) => m.url.includes('akamaized'))
   const streamUrl: string = (akamaiMedia ?? media[0]).url
 
@@ -187,7 +216,7 @@ export async function getKeshet12Url(): Promise<string> {
     na: '7.4.0',
   })
 
-  const tokenResp = await fetch(
+  const tokenResp = await fetchWithTimeout(
     'https://mass.mako.co.il/ClicksStatistics/entitlementsServicesV2.jsp?et=egt',
     {
       method: 'POST',
@@ -197,6 +226,9 @@ export async function getKeshet12Url(): Promise<string> {
   )
 
   const tokenEncrypted = (await tokenResp.text()).trim()
+  if (!tokenEncrypted || tokenEncrypted.startsWith('<')) {
+    throw new Error('Keshet 12 token returned HTML (geo-block or bot protection)')
+  }
   const tokenData = JSON.parse(decrypt(tokenEncrypted, TOKEN_KEY))
 
   if (!tokenData.tickets?.length) {

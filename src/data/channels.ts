@@ -58,8 +58,10 @@ export const channels: Channel[] = [
     id: 'knesset',
     name: 'ערוץ הכנסת',
     number: 99,
-    streamUrl: 'https://contact.gostreaming.tv/Knesset/myStream/playlist.m3u8',
-    fallbackUrl: 'https://kneset.gostreaming.tv/p2-kneset/_definst_/myStream/playlist.m3u8',
+    // Primary was contact.gostreaming.tv, which now 404s; the p2-kneset host is
+    // the live one. Keep the old URL as fallback in case it returns.
+    streamUrl: 'https://kneset.gostreaming.tv/p2-kneset/_definst_/myStream/playlist.m3u8',
+    fallbackUrl: 'https://contact.gostreaming.tv/Knesset/myStream/playlist.m3u8',
     type: 'hls',
     logo: '/logos/knesset.png',
     color: '#1a5276',

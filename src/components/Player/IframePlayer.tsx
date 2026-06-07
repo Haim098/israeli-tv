@@ -6,11 +6,17 @@ interface IframePlayerProps {
   channel: Channel
 }
 
+const IFRAME_LOAD_TIMEOUT = 15_000
+
 export function IframePlayer({ channel }: IframePlayerProps) {
   const setLoading = useTvStore((s) => s.setLoading)
 
   useEffect(() => {
     setLoading(true)
+    // If the iframe never fires `load` (broken/blocked URL, cached same-src),
+    // clear the spinner anyway so the player doesn't hang forever.
+    const timer = setTimeout(() => setLoading(false), IFRAME_LOAD_TIMEOUT)
+    return () => clearTimeout(timer)
   }, [channel.id, setLoading])
 
   return (
