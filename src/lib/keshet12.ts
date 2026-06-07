@@ -167,7 +167,14 @@ export async function getKeshet12Url(): Promise<string> {
   )
   const playlistEncrypted = (await playlistResp.text()).trim()
   const playlist = JSON.parse(decrypt(playlistEncrypted, PLAYLIST_KEY))
-  const streamUrl: string = playlist.media[0].url
+
+  // The entitlements API issues an AKAMAI (hdnea) ticket, which only validates
+  // on the Akamai host. Mako recently moved CloudFront to media[0], but the
+  // Akamai token is rejected there ("missing token in querystring" → 403).
+  // CloudFront also omits CORS headers. So always use the akamaized.net entry.
+  const media: Array<{ url: string }> = playlist.media
+  const akamaiMedia = media.find((m) => m.url.includes('akamaized'))
+  const streamUrl: string = (akamaiMedia ?? media[0]).url
 
   // Step 2: Request entitlements token
   const streamPath = streamUrl.replace(/^.*\/\/[^/]+/, '')
