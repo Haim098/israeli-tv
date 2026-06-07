@@ -26,8 +26,17 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const audioRef = useRef<HTMLAudioElement>(null)
     const hlsRef = useRef<Hls | null>(null)
     const isSwappedRef = useRef(false)
+    // Always points at the active channel, so the async error handler (which
+    // outlives the render that created it) reads the current channel rather
+    // than a stale closure.
+    const channelRef = useRef(channel)
+    // Bounds the network-error re-resolve loop so a permanently-failing token
+    // can't hammer the resolver/CDN forever.
+    const resolveAttemptsRef = useRef(0)
     const setLoading = useTvStore((s) => s.setLoading)
     const setError = useTvStore((s) => s.setError)
+
+    const MAX_RESOLVE_ATTEMPTS = 3
 
     useImperativeHandle(ref, () => ({
       getVideo: () => videoRef.current,
@@ -88,23 +97,46 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         hls.attachMedia(video)
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          // Healthy load — reset the re-resolve budget so a later token expiry
+          // gets a fresh set of recovery attempts.
+          resolveAttemptsRef.current = 0
           setLoading(false)
           video.play().catch(() => {})
         })
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
+            const ch = channelRef.current
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 // For dynamic-URL channels, re-resolve (token may have expired)
-                if (channel.resolveUrl) {
-                  console.warn('Network error on dynamic stream, re-resolving URL...')
+                if (ch.resolveUrl) {
+                  // Bail out of the loop once we've exhausted our attempts.
+                  if (resolveAttemptsRef.current >= MAX_RESOLVE_ATTEMPTS) {
+                    console.warn('Re-resolve attempts exhausted, giving up')
+                    hls.destroy()
+                    if (ch.fallbackUrl) {
+                      onFallbackToIframe?.(ch.fallbackUrl)
+                    } else {
+                      setError('שגיאה בטעינת השידור')
+                    }
+                    return
+                  }
+                  resolveAttemptsRef.current += 1
+                  const attempt = resolveAttemptsRef.current
+                  const channelId = ch.id
+                  console.warn(`Network error on dynamic stream, re-resolving URL (attempt ${attempt})...`)
                   hls.destroy()
-                  channel.resolveUrl().then((freshUrl) => {
+                  // force=true bypasses the resolver cache so we don't reload the
+                  // same rejected token.
+                  ch.resolveUrl(true).then((freshUrl) => {
+                    // Channel changed while resolving — abandon this load.
+                    if (channelRef.current.id !== channelId) return
                     loadStream(freshUrl)
                   }).catch(() => {
-                    if (channel.fallbackUrl) {
-                      onFallbackToIframe?.(channel.fallbackUrl)
+                    if (channelRef.current.id !== channelId) return
+                    if (ch.fallbackUrl) {
+                      onFallbackToIframe?.(ch.fallbackUrl)
                     } else {
                       setError('שגיאה בטעינת השידור')
                     }
@@ -112,15 +144,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   return
                 }
                 // Try fallback URL
-                if (channel.fallbackUrl && url !== channel.fallbackUrl) {
+                if (ch.fallbackUrl && url !== ch.fallbackUrl) {
                   console.warn('Primary URL failed, trying fallback...')
-                  if (!channel.fallbackUrl.endsWith('.m3u8')) {
+                  if (!ch.fallbackUrl.endsWith('.m3u8')) {
                     // Fallback is an iframe URL
                     hls.destroy()
-                    onFallbackToIframe?.(channel.fallbackUrl)
+                    onFallbackToIframe?.(ch.fallbackUrl)
                     return
                   }
-                  loadStream(channel.fallbackUrl)
+                  loadStream(ch.fallbackUrl)
                   return
                 }
                 hls.startLoad()
@@ -144,12 +176,13 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         }, { once: true })
 
         video.addEventListener('error', () => {
-          if (channel.fallbackUrl && url !== channel.fallbackUrl) {
-            if (!channel.fallbackUrl.endsWith('.m3u8')) {
-              onFallbackToIframe?.(channel.fallbackUrl)
+          const ch = channelRef.current
+          if (ch.fallbackUrl && url !== ch.fallbackUrl) {
+            if (!ch.fallbackUrl.endsWith('.m3u8')) {
+              onFallbackToIframe?.(ch.fallbackUrl)
               return
             }
-            loadStream(channel.fallbackUrl)
+            loadStream(ch.fallbackUrl)
           } else {
             setError('שגיאה בטעינת השידור')
           }
@@ -157,11 +190,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       } else {
         setError('הדפדפן אינו תומך בהפעלת וידאו')
       }
-    }, [channel.fallbackUrl, setLoading, setError, onFallbackToIframe])
+    }, [setLoading, setError, onFallbackToIframe])
 
     // Load stream on channel change — resolve dynamic URL if needed
     useEffect(() => {
       let cancelled = false
+      // Keep the latest-channel ref and reset the re-resolve budget for the
+      // newly selected channel.
+      channelRef.current = channel
+      resolveAttemptsRef.current = 0
       setLoading(true)
 
       if (channel.resolveUrl) {
@@ -189,7 +226,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           hlsRef.current = null
         }
       }
-    }, [channel.id, channel.streamUrl, channel.resolveUrl, channel.fallbackUrl, loadStream, setLoading, setError, onFallbackToIframe])
+    }, [channel, loadStream, setLoading, setError, onFallbackToIframe])
 
     // Background playback: auto-PiP first, fall back to audio swap
     useEffect(() => {
