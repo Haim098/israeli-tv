@@ -1,6 +1,18 @@
 import { useEffect } from 'react'
 import type { Channel } from '../types'
 
+function mimeForLogo(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase()
+  switch (ext) {
+    case 'png': return 'image/png'
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg'
+    case 'webp': return 'image/webp'
+    case 'svg': return 'image/svg+xml'
+    default: return 'image/png'
+  }
+}
+
 export function useMediaSession(
   channel: Channel,
   onNext: () => void,
@@ -15,7 +27,7 @@ export function useMediaSession(
       artist: 'שידור חי',
       album: 'טלוויזיה ישראלית',
       artwork: [
-        { src: channel.logo, sizes: '192x192', type: 'image/svg+xml' },
+        { src: channel.logo, sizes: '192x192', type: mimeForLogo(channel.logo) },
       ],
     })
 
