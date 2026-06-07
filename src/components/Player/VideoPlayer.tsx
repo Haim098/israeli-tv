@@ -246,8 +246,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const hls = hlsRef.current
 
         if (document.visibilityState === 'hidden' && video) {
-          // Try auto Picture-in-Picture first (keeps video in floating window)
-          if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+          // Already in PiP (user pressed the PiP button): the floating window
+          // keeps rendering live video on its own. Detaching HLS to swap to
+          // audio would freeze that frame — so leave it completely alone.
+          if (document.pictureInPictureElement) {
+            return
+          }
+          // Otherwise try to enter PiP (keeps video in a floating window);
+          // fall back to audio-only if PiP is unavailable or rejected.
+          if (document.pictureInPictureEnabled) {
             video.requestPictureInPicture().catch(swapToAudio)
           } else {
             swapToAudio()
