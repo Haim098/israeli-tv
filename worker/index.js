@@ -242,12 +242,19 @@ async function getKeshet12StreamUrl() {
   const playlistResp = await fetch(
     `https://www.mako.co.il/AjaxPage?jspName=playlist12.jsp&vcmid=${VCM_ID}&videoChannelId=${VIDEO_CHANNEL_ID}&galleryChannelId=${VCM_ID}&consumer=responsive`
   );
+  if (!playlistResp.ok) throw new Error('Playlist HTTP ' + playlistResp.status);
   const playlistEncrypted = (await playlistResp.text()).trim();
+  if (!playlistEncrypted || playlistEncrypted.startsWith('<')) {
+    throw new Error('Playlist returned HTML (geo-block or bot protection)');
+  }
   const playlist = JSON.parse(decryptPayload(playlistEncrypted, PLAYLIST_KEY));
 
   // Entitlements issues an AKAMAI (hdnea) ticket that only validates on the
   // Akamai host. Mako moved CloudFront to media[0], which rejects the token
   // ("missing token in querystring" → 403), so always pick the akamaized entry.
+  if (!Array.isArray(playlist.media) || playlist.media.length === 0) {
+    throw new Error('Playlist contained no media entries');
+  }
   const akamaiMedia = playlist.media.find((m) => m.url.includes('akamaized'));
   const streamUrl = (akamaiMedia || playlist.media[0]).url;
   const streamPath = streamUrl.replace(/^.*\/\/[^/]+/, '');
@@ -278,7 +285,11 @@ async function getKeshet12StreamUrl() {
     }
   );
 
+  if (!tokenResp.ok) throw new Error('Token HTTP ' + tokenResp.status);
   const tokenEncrypted = (await tokenResp.text()).trim();
+  if (!tokenEncrypted || tokenEncrypted.startsWith('<')) {
+    throw new Error('Token returned HTML (geo-block or bot protection)');
+  }
   const tokenData = JSON.parse(decryptPayload(tokenEncrypted, TOKEN_KEY));
 
   if (!tokenData.tickets || tokenData.tickets.length === 0) {
