@@ -7,7 +7,7 @@ export function ChannelGrid() {
   const setChannel = useTvStore((s) => s.setChannel)
 
   return (
-    <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+    <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-2">
       {channels.map((channel) => (
         <ChannelCard
           key={channel.id}
