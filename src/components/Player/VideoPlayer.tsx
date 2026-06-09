@@ -12,6 +12,15 @@ const backgroundPlaybackEnabled =
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(pointer: coarse)').matches
 
+// True when the video is already showing in a floating PiP window — either the
+// standard API (Android/desktop) or iOS Safari's webkit presentation mode.
+// Detaching HLS to swap to audio while in PiP would freeze that window.
+function isVideoInPiP(video: HTMLVideoElement): boolean {
+  const webkitMode = (video as HTMLVideoElement & { webkitPresentationMode?: string })
+    .webkitPresentationMode
+  return document.pictureInPictureElement === video || webkitMode === 'picture-in-picture'
+}
+
 interface VideoPlayerProps {
   channel: Channel
   onFallbackToIframe?: (url: string) => void
@@ -259,17 +268,21 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const hls = hlsRef.current
 
         if (document.visibilityState === 'hidden' && video && backgroundPlaybackEnabled) {
-          // The native `autopictureinpicture` attribute handles auto-PiP
-          // gesture-free and reliably. Calling requestPictureInPicture() here
-          // needs a user gesture (rejected from visibilitychange) and races
-          // with the native auto-PiP — its swapToAudio fallback would detach
-          // HLS from the very video the PiP window mirrors and freeze it,
-          // which is why background playback was inconsistent.
-          // So: let native auto-PiP do its job; only fall back to audio-only
-          // when PiP isn't available on this device at all.
-          if (!document.pictureInPictureElement && !document.pictureInPictureEnabled) {
-            swapToAudio()
-          }
+          // Already in a PiP window (manual button, or fullscreen-swipe native
+          // auto-PiP) — leave it; swapping to audio would detach & freeze it.
+          if (isVideoInPiP(video)) return
+          // Otherwise give the native `autopictureinpicture` attribute a beat to
+          // engage (the fullscreen-swipe → floating-video path); if no PiP
+          // window appears, fall back to audio-only so playback always
+          // continues in the background. The short delay is what removes the
+          // race that previously froze the video or dropped playback entirely.
+          // (We don't call requestPictureInPicture() here — it needs a user
+          // gesture and is rejected from visibilitychange.)
+          window.setTimeout(() => {
+            if (document.visibilityState === 'hidden' && !isVideoInPiP(video)) {
+              swapToAudio()
+            }
+          }, 300)
         } else if (document.visibilityState === 'visible' && video) {
           // Exit PiP if active
           if (document.pictureInPictureElement) {
