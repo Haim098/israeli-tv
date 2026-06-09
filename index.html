@@ -22,6 +22,16 @@
       // a reload loop if something is genuinely broken.
       (function () {
         var KEY = 'splashReload';
+        // If Android discarded this PWA while it was backgrounded (e.g. left in
+        // auto-PiP), restoring the hung document can freeze on the launch logo.
+        // Start fresh instead. wasDiscarded is cleared by the reload, so this
+        // runs at most once.
+        if (document.wasDiscarded && !sessionStorage.getItem('discardReload')) {
+          sessionStorage.setItem('discardReload', '1');
+          location.reload();
+          return;
+        }
+        sessionStorage.removeItem('discardReload');
         setTimeout(function () {
           var root = document.getElementById('root');
           if (!root) return;
