@@ -96,7 +96,11 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          backBufferLength: 300,
+          // Keep only ~1 min of already-played video. 5 min (300s) holds
+          // ~100MB on mobile, which gets the backgrounded PWA OOM-killed
+          // (white screen / frozen splash on relaunch). DVR seek-back beyond
+          // this re-fetches from the server.
+          backBufferLength: 60,
           liveDurationInfinity: true,
           liveSyncDurationCount: 2,
         })
@@ -255,17 +259,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const hls = hlsRef.current
 
         if (document.visibilityState === 'hidden' && video && backgroundPlaybackEnabled) {
-          // Already in PiP (user pressed the PiP button): the floating window
-          // keeps rendering live video on its own. Detaching HLS to swap to
-          // audio would freeze that frame — so leave it completely alone.
-          if (document.pictureInPictureElement) {
-            return
-          }
-          // Otherwise try to enter PiP (keeps video in a floating window);
-          // fall back to audio-only if PiP is unavailable or rejected.
-          if (document.pictureInPictureEnabled) {
-            video.requestPictureInPicture().catch(swapToAudio)
-          } else {
+          // The native `autopictureinpicture` attribute handles auto-PiP
+          // gesture-free and reliably. Calling requestPictureInPicture() here
+          // needs a user gesture (rejected from visibilitychange) and races
+          // with the native auto-PiP — its swapToAudio fallback would detach
+          // HLS from the very video the PiP window mirrors and freeze it,
+          // which is why background playback was inconsistent.
+          // So: let native auto-PiP do its job; only fall back to audio-only
+          // when PiP isn't available on this device at all.
+          if (!document.pictureInPictureElement && !document.pictureInPictureEnabled) {
             swapToAudio()
           }
         } else if (document.visibilityState === 'visible' && video) {
