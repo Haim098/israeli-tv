@@ -88,6 +88,26 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
     }
   }
 
+  // The PWA is locked to portrait (manifest). While a video is fullscreen,
+  // release the lock so the user can rotate freely (portrait or landscape);
+  // revert to portrait on exit. Covers every enter/exit path (button, gesture,
+  // ESC). Wrapped because the Orientation Lock API is absent on desktop.
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (orientation: 'any') => Promise<void>
+      }
+      if (!orientation) return
+      if (document.fullscreenElement) {
+        orientation.lock?.('any').catch(() => {})
+      } else {
+        orientation.unlock?.()
+      }
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
   return (
     <div className="flex flex-col">
       {/* Timeline / seek bar – HLS streams with DVR window only */}
