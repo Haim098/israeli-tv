@@ -2,8 +2,11 @@ import { AppShell } from './components/Layout/AppShell'
 import { Header } from './components/Layout/Header'
 import { PlayerContainer } from './components/Player/PlayerContainer'
 import { ChannelGrid } from './components/Channels/ChannelGrid'
+import { useOrientationLock } from './hooks/useOrientationLock'
 
 export default function App() {
+  useOrientationLock()
+
   return (
     <AppShell>
       <Header />
