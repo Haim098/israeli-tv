@@ -3,6 +3,15 @@ import Hls from 'hls.js'
 import type { Channel } from '../../types'
 import { useTvStore } from '../../stores/tvStore'
 
+// Background playback (auto-PiP + audio-swap when the app is backgrounded) is a
+// mobile feature: on a phone, leaving the app should keep the stream going. On
+// desktop it's unwanted — switching tabs/windows would pop an unrequested PiP
+// window that keeps playing. Gate it to touch devices (primary pointer coarse).
+const backgroundPlaybackEnabled =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches
+
 interface VideoPlayerProps {
   channel: Channel
   onFallbackToIframe?: (url: string) => void
@@ -245,7 +254,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const audio = audioRef.current
         const hls = hlsRef.current
 
-        if (document.visibilityState === 'hidden' && video) {
+        if (document.visibilityState === 'hidden' && video && backgroundPlaybackEnabled) {
           // Already in PiP (user pressed the PiP button): the floating window
           // keeps rendering live video on its own. Detaching HLS to swap to
           // audio would freeze that frame — so leave it completely alone.
@@ -292,9 +301,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         }
       }
 
-      // If PiP closes while still in background, fall back to audio
+      // If PiP closes while still in background, fall back to audio (mobile only)
       const onLeavePiP = () => {
-        if (document.visibilityState === 'hidden') swapToAudio()
+        if (backgroundPlaybackEnabled && document.visibilityState === 'hidden') swapToAudio()
       }
 
       const video = videoRef.current
@@ -317,7 +326,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           autoPlay
           muted={false}
           // @ts-ignore autopictureinpicture is not yet in TS types
-          autopictureinpicture=""
+          autopictureinpicture={backgroundPlaybackEnabled ? '' : undefined}
         />
         <audio ref={audioRef} hidden />
       </>
