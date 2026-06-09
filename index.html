@@ -15,5 +15,24 @@
   <body class="bg-neutral-950 text-white">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Splash self-heal: if the app shell hasn't mounted within 8s (a hung
+      // service-worker update or chunk after a PWA relaunch leaves the launch
+      // logo frozen), reload once to recover. The sessionStorage guard prevents
+      // a reload loop if something is genuinely broken.
+      (function () {
+        var KEY = 'splashReload';
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (!root) return;
+          if (root.childElementCount === 0 && !sessionStorage.getItem(KEY)) {
+            sessionStorage.setItem(KEY, '1');
+            location.reload();
+          } else if (root.childElementCount > 0) {
+            sessionStorage.removeItem(KEY);
+          }
+        }, 8000);
+      })();
+    </script>
   </body>
 </html>

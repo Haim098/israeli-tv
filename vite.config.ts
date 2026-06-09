@@ -38,6 +38,9 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,jpg,woff2}'],
         navigateFallback: '/index.html',
+        // Drop precaches from older builds when the SW updates, so a relaunch
+        // never serves a stale/partial chunk (a cause of white-screen/hang).
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
