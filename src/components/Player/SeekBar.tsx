@@ -61,12 +61,12 @@ export function SeekBar({ playerRef }: SeekBarProps) {
   }
 
   return (
-    <div className="flex items-center gap-2 px-3 pb-1" dir="ltr">
+    <div className="flex items-center gap-2 px-3 py-2" dir="ltr">
       <input
         type="range"
         min={0}
         max={duration}
-        step={1}
+        step={Math.max(1, Math.floor(duration / 300))}
         value={sliderValue}
         onMouseDown={handleMouseDown}
         onTouchStart={handleMouseDown}
