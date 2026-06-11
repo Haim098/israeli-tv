@@ -22,6 +22,23 @@ video::-webkit-media-controls {
   display: none !important;
 }
 
+/* Applied to the <video> for the duration of a manual (button-initiated) PiP
+   session on mobile. Chrome on Android derives the PiP surface from the video
+   element's on-screen rect — entering PiP from the small inline player leaves
+   a surface that can't fill the floating window when the user enlarges it
+   (white margins). Covering the viewport reproduces the fullscreen-swipe entry
+   path, which never had the bug. The page is hidden behind the floating window
+   while this is active; usePiP removes it on leavepictureinpicture. */
+video.pip-staging {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: 100vw;
+  height: 100dvh;
+  background: #000;
+  object-fit: contain;
+}
+
 /* Active channel glow */
 .channel-active-glow {
   box-shadow: 0 0 28px var(--glow-color, rgba(255,255,255,0.3));

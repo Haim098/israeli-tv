@@ -5,6 +5,15 @@ interface WebKitHTMLVideoElement extends HTMLVideoElement {
   webkitPresentationMode?: string
 }
 
+// The pip-staging viewport-cover trick is only needed (and only acceptable) on
+// mobile: there the floating window hides the page, and Chrome on Android is
+// where the small-source-rect white-margins bug lives. On desktop the page
+// stays visible next to the PiP window, so covering it would be a regression.
+const isMobileLike =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches
+
 export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
   const [isPiP, setIsPiP] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
@@ -22,7 +31,12 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
     if (!video) return
 
     const onEnter = () => setIsPiP(true)
-    const onLeave = () => setIsPiP(false)
+    const onLeave = () => {
+      // End the manual-PiP staging cover (see togglePiP) however the session
+      // ended — button toggle, window close, or return-to-app.
+      video.classList.remove('pip-staging')
+      setIsPiP(false)
+    }
 
     video.addEventListener('enterpictureinpicture', onEnter)
     video.addEventListener('leavepictureinpicture', onLeave)
@@ -51,11 +65,23 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
           unlock?: () => void
         }
         try { orientation.unlock?.() } catch { /* noop */ }
-        // Two frames so the viewport actually settles before PiP entry.
+        // Cover the viewport with the video before entry — Chrome on Android
+        // sizes the PiP surface from the element's on-screen rect, and entering
+        // from the small inline player breaks enlarging the floating window
+        // (white margins). This mirrors the fullscreen-swipe path, which works.
+        // The class stays on for the whole PiP session (the page is hidden
+        // behind the floating window) and onLeave removes it.
+        if (isMobileLike) video.classList.add('pip-staging')
+        // Two frames so the layout actually settles before PiP entry.
         await new Promise<void>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
         )
-        await video.requestPictureInPicture()
+        try {
+          await video.requestPictureInPicture()
+        } catch (err) {
+          video.classList.remove('pip-staging')
+          throw err
+        }
       } else {
         const webkitVideo = video as WebKitHTMLVideoElement
         if (webkitVideo.webkitSetPresentationMode) {
