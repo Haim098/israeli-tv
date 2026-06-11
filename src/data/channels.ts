@@ -48,7 +48,11 @@ export const channels: Channel[] = [
     name: 'i24 NEWS',
     number: 24,
     streamUrl: 'https://video.i24news.tv/live',
-    fallbackUrl: 'https://video.i24news.tv/live',
+    // No fallbackUrl: the i24 portals (video.i24news.tv, immergo) send
+    // `X-Frame-Options: DENY` + `CSP frame-ancestors 'none'`, so an iframe
+    // fallback would just show a blocked/blank page. When the Wiztivi upstream
+    // serves a stale window, the resolver throws an I24StaleError whose
+    // userMessage surfaces in the error overlay.
     type: 'hls',
     logo: '/logos/i24news.jpg',
     color: '#00a0e3',

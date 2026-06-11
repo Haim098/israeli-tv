@@ -26,6 +26,8 @@ function isVideoInPiP(video: HTMLVideoElement): boolean {
 
 interface VideoPlayerProps {
   channel: Channel
+  /** Bumped by the retry button to force a fresh resolve (cache-bypassing). */
+  retryNonce?: number
   onFallbackToIframe?: (url: string) => void
 }
 
@@ -42,7 +44,7 @@ export interface VideoPlayerHandle {
 }
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  function VideoPlayer({ channel, onFallbackToIframe }, ref) {
+  function VideoPlayer({ channel, retryNonce = 0, onFallbackToIframe }, ref) {
     const videoRef = useRef<HTMLVideoElement>(null)
     const audioRef = useRef<HTMLAudioElement>(null)
     const hlsRef = useRef<Hls | null>(null)
@@ -236,13 +238,21 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       setLoading(true)
 
       if (channel.resolveUrl) {
-        channel.resolveUrl().then((url) => {
+        // On retry, bypass any cached/stale URL the resolver may be holding.
+        channel.resolveUrl(retryNonce > 0).then((url) => {
           if (!cancelled) loadStream(url)
         }).catch((err) => {
           if (!cancelled) {
             warn('Failed to resolve stream URL:', err)
-            // Fall back to iframe URL if available
-            if (channel.fallbackUrl) {
+            // Resolver may attach a Hebrew `userMessage` for cases like a stale
+            // upstream where we'd rather show the truth than silently iframe to
+            // a blocked page or play 30 seconds of yesterday's news on loop.
+            const userMsg = (err && typeof err === 'object' && 'userMessage' in err)
+              ? (err as { userMessage?: string }).userMessage
+              : undefined
+            if (userMsg) {
+              setError(userMsg)
+            } else if (channel.fallbackUrl) {
               onFallbackToIframe?.(channel.fallbackUrl)
             } else {
               setError('שגיאה בטעינת השידור')
@@ -260,7 +270,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           hlsRef.current = null
         }
       }
-    }, [channel, loadStream, setLoading, setError, onFallbackToIframe])
+    }, [channel, retryNonce, loadStream, setLoading, setError, onFallbackToIframe])
 
     // Background playback: auto-PiP first, fall back to audio swap
     useEffect(() => {

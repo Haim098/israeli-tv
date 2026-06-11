@@ -41,6 +41,20 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture()
       } else if ('requestPictureInPicture' in video) {
+        // Release the portrait orientation lock BEFORE entering PiP. The system
+        // captures the floating window's source rect at the moment of entry — a
+        // portrait lock active here leaves white margins when the user enlarges
+        // the floating window. Auto-PiP via swipe doesn't hit this because the
+        // app is already fullscreen (orientation 'any') when it triggers.
+        // useOrientationLock will re-lock to portrait on `leavepictureinpicture`.
+        const orientation = screen.orientation as ScreenOrientation & {
+          unlock?: () => void
+        }
+        try { orientation.unlock?.() } catch { /* noop */ }
+        // Two frames so the viewport actually settles before PiP entry.
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        )
         await video.requestPictureInPicture()
       } else {
         const webkitVideo = video as WebKitHTMLVideoElement

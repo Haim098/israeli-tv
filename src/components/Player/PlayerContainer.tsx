@@ -21,6 +21,10 @@ export function PlayerContainer() {
 
   // When HLS fails and fallback is an iframe URL, override to iframe mode
   const [iframeFallback, setIframeFallback] = useState<{ channelId: string; url: string } | null>(null)
+  // Incremented by the retry button to force VideoPlayer to re-run its resolve
+  // effect (with `force=true`, bypassing the resolver cache). `setChannel` with
+  // the same channel object wouldn't trigger the effect on its own.
+  const [retryNonce, setRetryNonce] = useState(0)
 
   // Auto-hide controls
   const [showControls, setShowControls] = useState(true)
@@ -38,9 +42,10 @@ export function PlayerContainer() {
     return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }
   }, [resetControlsTimer])
 
-  // Clear iframe fallback when channel changes
+  // Clear iframe fallback and retry counter when channel changes
   useEffect(() => {
     setIframeFallback(null)
+    setRetryNonce(0)
   }, [currentChannel.id])
 
   const playerRef = useRef<VideoPlayerHandle>(null)
@@ -94,6 +99,7 @@ export function PlayerContainer() {
         <VideoPlayer
           ref={playerRef}
           channel={currentChannel}
+          retryNonce={retryNonce}
           onFallbackToIframe={onFallbackToIframe}
         />
       ) : (
@@ -130,8 +136,9 @@ export function PlayerContainer() {
           <button
             onClick={() => {
               setIframeFallback(null)
+              setRetryNonce((n) => n + 1)
               useTvStore.getState().setError(null)
-              useTvStore.getState().setChannel(currentChannel)
+              useTvStore.getState().setLoading(true)
             }}
             className="mt-1 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 active:scale-95"
           >
