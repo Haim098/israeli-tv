@@ -62,7 +62,7 @@ export function PlayerContainer() {
   // Run on every render to keep the PiP video ref in sync.
   queueMicrotask(updateVideoRef)
 
-  const { isPiP, isSupported: isPiPSupported, togglePiP } = usePiP(videoElementRef)
+  const { isPiP, isSupported: isPiPSupported, togglePiP, pipError } = usePiP(videoElementRef)
 
   const onPlayPause = useCallback(() => {
     playerRef.current?.togglePlay()
@@ -144,6 +144,17 @@ export function PlayerContainer() {
           >
             נסה שוב
           </button>
+        </div>
+      )}
+
+      {/* PiP failure toast — diagnostic aid for on-device debugging where no
+          console is reachable. Auto-clears via usePiP. */}
+      {pipError && (
+        <div
+          dir="ltr"
+          className="absolute inset-x-3 top-12 z-30 rounded-lg bg-black/85 px-3 py-2 text-center text-xs font-medium text-amber-300"
+        >
+          PiP error: {pipError}
         </div>
       )}
 
