@@ -7,19 +7,19 @@ export function LiveBadge({ isAtLive = true, onGoLive }: LiveBadgeProps) {
   return (
     <button
       onClick={onGoLive}
-      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-bold transition ${
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition active:scale-95 ${
         isAtLive
-          ? 'bg-red-600/90 text-white'
-          : 'bg-white/20 text-white/60 hover:bg-red-600/70 hover:text-white'
+          ? 'bg-red-600 text-white'
+          : 'animate-pulse bg-white/15 text-white/80 hover:bg-red-600 hover:text-white'
       }`}
-      aria-label="עבור לשידור חי"
+      aria-label={isAtLive ? 'שידור חי' : 'חזרה לשידור חי'}
     >
       <span
         className={`h-2 w-2 rounded-full ${
-          isAtLive ? 'animate-pulse bg-white' : 'bg-white/40'
+          isAtLive ? 'animate-pulse bg-white' : 'bg-white/60'
         }`}
       />
-      שידור חי
+      {isAtLive ? 'שידור חי' : 'חזרה ללייב'}
     </button>
   )
 }

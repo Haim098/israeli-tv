@@ -9,7 +9,16 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="referrer" content="no-referrer" />
     <meta name="description" content="צפייה בשידורי טלוויזיה ישראלית בשידור חי" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
+
+    <!-- Warm up TLS to the stream CDNs so the first segment loads faster -->
+    <link rel="preconnect" href="https://r.il.cdn-redge.media" crossorigin />
+    <link rel="preconnect" href="https://mako-streaming.akamaized.net" crossorigin />
+    <link rel="preconnect" href="https://www.mako.co.il" crossorigin />
+    <link rel="preconnect" href="https://dsk76kvc9kie6.cloudfront.net" crossorigin />
+    <link rel="dns-prefetch" href="https://api.i24news.wiztivi.io" />
+    <link rel="dns-prefetch" href="https://kneset.gostreaming.tv" />
+
     <title>טלוויזיה חיה</title>
   </head>
   <body class="bg-neutral-950 text-white">

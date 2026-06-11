@@ -104,7 +104,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               {/* Rewind 10s */}
               <button
                 onClick={() => skip(-10)}
-                className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+                className="rounded-xl p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white active:scale-90"
                 aria-label="אחורה 10 שניות"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
@@ -116,15 +116,15 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               {/* Play/Pause */}
               <button
                 onClick={togglePlay}
-                className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+                className="rounded-full bg-white/10 p-3 text-white transition hover:bg-white/20 active:scale-90"
                 aria-label={isPlaying ? 'השהה' : 'הפעל'}
               >
                 {isPlaying ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-6 w-6">
                     <path fillRule="evenodd" d="M6.75 5.25a.75.75 0 01.75-.75H9a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V5.25zm7.5 0A.75.75 0 0115 4.5h1.5a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H15a.75.75 0 01-.75-.75V5.25z" clipRule="evenodd" />
                   </svg>
                 ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-6 w-6">
                     <path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clipRule="evenodd" />
                   </svg>
                 )}
@@ -133,7 +133,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               {/* Forward 10s */}
               <button
                 onClick={() => skip(10)}
-                className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+                className="rounded-xl p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white active:scale-90"
                 aria-label="קדימה 10 שניות"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
@@ -145,7 +145,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               {/* Mute */}
               <button
                 onClick={toggleMute}
-                className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+                className="rounded-xl p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white active:scale-90"
                 aria-label={isMuted ? 'בטל השתקה' : 'השתק'}
               >
                 {isMuted ? (
@@ -164,7 +164,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               {isPiPSupported && (
                 <button
                   onClick={onPiPToggle}
-                  className={`rounded-lg p-2 transition hover:bg-white/10 ${isPiP ? 'text-blue-400' : 'text-white/80 hover:text-white'}`}
+                  className={`rounded-xl p-2.5 transition hover:bg-white/10 active:scale-90 ${isPiP ? 'text-blue-400' : 'text-white/70 hover:text-white'}`}
                   aria-label="תמונה בתוך תמונה"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
@@ -179,7 +179,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
           {/* Fullscreen */}
           <button
             onClick={toggleFullscreen}
-            className="rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+            className="rounded-xl p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white active:scale-90"
             aria-label="מסך מלא"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">

@@ -13,8 +13,8 @@ export function ChannelCard({ channel, isActive, onSelect }: ChannelCardProps) {
       className={`
         relative flex flex-col items-center gap-2 rounded-2xl p-3 transition-all duration-200
         ${isActive
-          ? 'channel-active-glow scale-[1.03] border-2 bg-white/10'
-          : 'border-2 border-transparent bg-surface-light hover:bg-surface-lighter active:scale-95'
+          ? 'channel-active-glow scale-105 border-2 bg-white/10'
+          : 'border-2 border-transparent bg-surface-light hover:bg-surface-lighter hover:scale-[1.02] active:scale-95'
         }
       `}
       style={{
@@ -28,6 +28,8 @@ export function ChannelCard({ channel, isActive, onSelect }: ChannelCardProps) {
       <img
         src={channel.logo}
         alt={channel.name}
+        width={56}
+        height={56}
         className="h-14 w-14 rounded-xl"
         loading="lazy"
       />

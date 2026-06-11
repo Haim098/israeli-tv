@@ -1,7 +1,10 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react'
 import Hls from 'hls.js'
 import type { Channel } from '../../types'
 import { useTvStore } from '../../stores/tvStore'
+
+const isDev = import.meta.env.DEV
+const warn = (...args: unknown[]) => { if (isDev) console.warn(...args) }
 
 // Background playback (auto-PiP + audio-swap when the app is backgrounded) is a
 // mobile feature: on a phone, leaving the app should keep the stream going. On
@@ -53,6 +56,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const resolveAttemptsRef = useRef(0)
     const setLoading = useTvStore((s) => s.setLoading)
     const setError = useTvStore((s) => s.setError)
+    // Autoplay with sound is blocked without a user gesture (e.g. cold PWA
+    // launch) — show a tap-to-play affordance instead of a silent dead frame.
+    const [showTapToPlay, setShowTapToPlay] = useState(false)
 
     const MAX_RESOLVE_ATTEMPTS = 3
 
@@ -95,6 +101,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const video = videoRef.current
       if (!video) return
 
+      setShowTapToPlay(false)
+
       // Cleanup previous instance
       if (hlsRef.current) {
         hlsRef.current.destroy()
@@ -123,7 +131,11 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           // gets a fresh set of recovery attempts.
           resolveAttemptsRef.current = 0
           setLoading(false)
-          video.play().catch(() => {})
+          setShowTapToPlay(false)
+          video.play().then(() => setShowTapToPlay(false)).catch((err) => {
+            // Autoplay blocked (no user gesture) — surface a tap-to-play button.
+            if (err?.name === 'NotAllowedError') setShowTapToPlay(true)
+          })
         })
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -135,7 +147,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 if (ch.resolveUrl) {
                   // Bail out of the loop once we've exhausted our attempts.
                   if (resolveAttemptsRef.current >= MAX_RESOLVE_ATTEMPTS) {
-                    console.warn('Re-resolve attempts exhausted, giving up')
+                    warn('Re-resolve attempts exhausted, giving up')
                     hls.destroy()
                     if (ch.fallbackUrl) {
                       onFallbackToIframe?.(ch.fallbackUrl)
@@ -147,7 +159,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   resolveAttemptsRef.current += 1
                   const attempt = resolveAttemptsRef.current
                   const channelId = ch.id
-                  console.warn(`Network error on dynamic stream, re-resolving URL (attempt ${attempt})...`)
+                  warn(`Network error on dynamic stream, re-resolving URL (attempt ${attempt})...`)
                   hls.destroy()
                   // force=true bypasses the resolver cache so we don't reload the
                   // same rejected token.
@@ -167,7 +179,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 }
                 // Try fallback URL
                 if (ch.fallbackUrl && url !== ch.fallbackUrl) {
-                  console.warn('Primary URL failed, trying fallback...')
+                  warn('Primary URL failed, trying fallback...')
                   if (!ch.fallbackUrl.endsWith('.m3u8')) {
                     // Fallback is an iframe URL
                     hls.destroy()
@@ -228,7 +240,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           if (!cancelled) loadStream(url)
         }).catch((err) => {
           if (!cancelled) {
-            console.error('Failed to resolve stream URL:', err)
+            warn('Failed to resolve stream URL:', err)
             // Fall back to iframe URL if available
             if (channel.fallbackUrl) {
               onFallbackToIframe?.(channel.fallbackUrl)
@@ -255,11 +267,54 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const swapToAudio = () => {
         const hls = hlsRef.current
         const audio = audioRef.current
+        const video = videoRef.current
         if (!hls || !audio || isSwappedRef.current) return
+        const resumeAt = video?.currentTime
         hls.detachMedia()
         hls.attachMedia(audio)
+        // Preserve the playback position so audio doesn't jump on the swap.
+        if (resumeAt != null) {
+          audio.addEventListener('loadedmetadata', () => { audio.currentTime = resumeAt }, { once: true })
+        }
         audio.play().catch(() => {})
         isSwappedRef.current = true
+      }
+
+      // Jump to the true live edge after returning from the background. Relying
+      // on hls.liveSyncPosition alone leaves DVR streams (notably i24) stuck at
+      // the pre-background position, because that value is stale until the
+      // playlist reloads. We wait for the next level update / canplay, then seek
+      // to the real seekable edge.
+      const resyncToLive = () => {
+        const v = videoRef.current
+        const hls = hlsRef.current
+        if (!v) return
+        let done = false
+        let timer = 0
+        const cleanup = () => {
+          v.removeEventListener('canplay', jump)
+          if (hls) hls.off(Hls.Events.LEVEL_UPDATED, jump)
+          clearTimeout(timer)
+        }
+        function jump() {
+          if (done) return
+          const sk = v!.seekable
+          if (sk.length > 0) {
+            done = true
+            v!.currentTime = Math.max(sk.start(0), sk.end(sk.length - 1) - 1.5)
+          } else if (hls?.liveSyncPosition != null) {
+            done = true
+            v!.currentTime = hls.liveSyncPosition
+          } else {
+            return
+          }
+          v!.play().catch(() => {})
+          cleanup()
+        }
+        if (hls) hls.on(Hls.Events.LEVEL_UPDATED, jump)
+        v.addEventListener('canplay', jump)
+        timer = window.setTimeout(jump, 2500)
+        jump()
       }
 
       const onVisibility = () => {
@@ -290,29 +345,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
 
           if (isSwappedRef.current && hls && audio) {
-            // Swap back from audio to video
-            const wasPaused = audio.paused
+            // Swap back from audio to video, then jump to live.
             audio.pause()
             hls.detachMedia()
             hls.attachMedia(video)
             isSwappedRef.current = false
-            video.addEventListener('canplay', () => {
-              const pos = hls.liveSyncPosition
-              if (pos != null) video.currentTime = pos
-              if (!wasPaused) video.play().catch(() => {})
-            }, { once: true })
-          } else {
-            // Not swapped (was in PiP or native HLS) — seek to live edge
-            if (hls) {
-              const pos = hls.liveSyncPosition
-              if (pos != null) video.currentTime = pos
-            } else if (video.duration === Infinity) {
-              video.currentTime = video.seekable.length > 0
-                ? video.seekable.end(video.seekable.length - 1)
-                : video.duration
-            }
-            video.play().catch(() => {})
           }
+          // Always resync to the live edge on return (the reported i24 bug:
+          // it used to resume at a stale position and never catch up).
+          resyncToLive()
         }
       }
 
@@ -344,6 +385,22 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           autopictureinpicture={backgroundPlaybackEnabled ? '' : undefined}
         />
         <audio ref={audioRef} hidden />
+        {showTapToPlay && (
+          <button
+            onClick={() => {
+              const v = videoRef.current
+              v?.play().then(() => setShowTapToPlay(false)).catch(() => {})
+            }}
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 transition"
+            aria-label="הקש לצפייה"
+          >
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm ring-1 ring-white/30">
+              <svg viewBox="0 0 24 24" className="h-7 w-7 translate-x-0.5 fill-white">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </span>
+          </button>
+        )}
       </>
     )
   },

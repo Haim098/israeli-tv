@@ -10,7 +10,7 @@ import { useMediaSession } from '../../hooks/useMediaSession'
 import { useWakeLock } from '../../hooks/useWakeLock'
 import type { Channel } from '../../types'
 
-const CONTROLS_TIMEOUT = 3000
+const CONTROLS_TIMEOUT = 5000
 
 export function PlayerContainer() {
   const currentChannel = useTvStore((s) => s.currentChannel)
@@ -54,7 +54,7 @@ export function PlayerContainer() {
     }
   }, [])
 
-  // Run on every render to keep ref in sync
+  // Run on every render to keep the PiP video ref in sync.
   queueMicrotask(updateVideoRef)
 
   const { isPiP, isSupported: isPiPSupported, togglePiP } = usePiP(videoElementRef)
@@ -100,24 +100,40 @@ export function PlayerContainer() {
         <IframePlayer channel={iframeChannel!} />
       )}
 
+      {/* Now-playing channel label — fades with the controls */}
+      <div
+        className={`pointer-events-none absolute top-0 inset-x-0 bg-gradient-to-b from-black/70 to-transparent p-3 transition-opacity duration-300 ${
+          showControls && !error ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-white drop-shadow">
+          <img src={currentChannel.logo} alt="" className="h-5 w-5 rounded" />
+          {currentChannel.name}
+        </span>
+      </div>
+
       {/* Loading overlay */}
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-          <Spinner />
+      {isLoading && !error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/45">
+          <Spinner label={`טוען ${currentChannel.name}…`} />
         </div>
       )}
 
       {/* Error overlay */}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80">
-          <p className="text-sm text-red-400">{error}</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center">
+          <svg viewBox="0 0 24 24" className="h-10 w-10 fill-red-500" aria-hidden="true">
+            <path d="M12 2 1 21h22L12 2zm0 14a1 1 0 110 2 1 1 0 010-2zm-1-7h2v5h-2V9z" />
+          </svg>
+          <p className="text-base font-semibold text-white">{error}</p>
+          <p className="text-sm text-white/60">נסה שוב או בחר ערוץ אחר</p>
           <button
             onClick={() => {
               setIframeFallback(null)
               useTvStore.getState().setError(null)
               useTvStore.getState().setChannel(currentChannel)
             }}
-            className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/20"
+            className="mt-1 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 active:scale-95"
           >
             נסה שוב
           </button>
