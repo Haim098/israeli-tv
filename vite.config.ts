@@ -2,8 +2,19 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { execSync } from 'node:child_process'
+
+// Short git sha shown in the footer — lets us tell at a glance whether an
+// installed PWA is serving a stale cached build.
+let buildId = 'dev'
+try {
+  buildId = execSync('git rev-parse --short HEAD').toString().trim()
+} catch { /* not a git checkout (CI tarball) — keep 'dev' */ }
 
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
   build: {
     rollupOptions: {
       output: {

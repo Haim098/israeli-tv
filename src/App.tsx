@@ -28,6 +28,8 @@ export default function App() {
       </main>
       <footer className="py-4 text-center text-xs text-white/30">
         Developed by Haim Raich
+        <span className="mx-1.5 text-white/15">·</span>
+        <span dir="ltr" className="text-[10px] text-white/15">{__BUILD_ID__}</span>
       </footer>
     </AppShell>
   )

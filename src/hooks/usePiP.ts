@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 
 interface WebKitHTMLVideoElement extends HTMLVideoElement {
   webkitSetPresentationMode?: (mode: string) => void
@@ -17,6 +17,10 @@ const isMobileLike =
 export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
   const [isPiP, setIsPiP] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
+  // True while a PiP session was started by our button (vs. the native
+  // fullscreen-swipe auto-PiP). Only then do we own the fullscreen state and
+  // must unwind it when the session ends.
+  const enteredFromButtonRef = useRef(false)
 
   useEffect(() => {
     const video = document.createElement('video') as unknown as WebKitHTMLVideoElement
@@ -32,9 +36,15 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
 
     const onEnter = () => setIsPiP(true)
     const onLeave = () => {
-      // End the manual-PiP staging cover (see togglePiP) however the session
-      // ended — button toggle, window close, or return-to-app.
+      // End the manual-PiP staging (see togglePiP) however the session ended —
+      // button toggle, window close, or return-to-app. Fullscreen is only
+      // unwound when we entered it ourselves; a user-initiated fullscreen
+      // (the auto-PiP swipe path) keeps its state.
       video.classList.remove('pip-staging')
+      if (enteredFromButtonRef.current) {
+        enteredFromButtonRef.current = false
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+      }
       setIsPiP(false)
     }
 
@@ -65,13 +75,22 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
           unlock?: () => void
         }
         try { orientation.unlock?.() } catch { /* noop */ }
-        // Cover the viewport with the video before entry — Chrome on Android
-        // sizes the PiP surface from the element's on-screen rect, and entering
-        // from the small inline player breaks enlarging the floating window
-        // (white margins). This mirrors the fullscreen-swipe path, which works.
-        // The class stays on for the whole PiP session (the page is hidden
-        // behind the floating window) and onLeave removes it.
-        if (isMobileLike) video.classList.add('pip-staging')
+        // Manual-button PiP breaks on Android (video frozen at its small
+        // inline size on a white surface when the floating window is enlarged)
+        // while the native fullscreen-swipe auto-PiP works. The difference is
+        // the state the surface is captured from, so reproduce the working
+        // path exactly: enter fullscreen first — requestFullscreen requires
+        // transient activation but does NOT consume it, so the PiP request
+        // below still rides the same button click. The pip-staging class is
+        // belt-and-braces for devices where requestFullscreen rejects.
+        if (isMobileLike) {
+          enteredFromButtonRef.current = true
+          video.classList.add('pip-staging')
+          const container = (video.closest('.player-container') ?? video) as HTMLElement
+          try {
+            await container.requestFullscreen?.()
+          } catch { /* staging still covers the viewport */ }
+        }
         // Two frames so the layout actually settles before PiP entry.
         await new Promise<void>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -79,7 +98,12 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
         try {
           await video.requestPictureInPicture()
         } catch (err) {
+          // Entry failed — unwind the staging fullscreen/cover immediately.
           video.classList.remove('pip-staging')
+          if (enteredFromButtonRef.current) {
+            enteredFromButtonRef.current = false
+            if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+          }
           throw err
         }
       } else {
