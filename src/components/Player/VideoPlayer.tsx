@@ -280,43 +280,6 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         isSwappedRef.current = true
       }
 
-      // Jump to the true live edge after returning from the background. Relying
-      // on hls.liveSyncPosition alone leaves DVR streams (notably i24) stuck at
-      // the pre-background position, because that value is stale until the
-      // playlist reloads. We wait for the next level update / canplay, then seek
-      // to the real seekable edge.
-      const resyncToLive = () => {
-        const v = videoRef.current
-        const hls = hlsRef.current
-        if (!v) return
-        let done = false
-        let timer = 0
-        const cleanup = () => {
-          v.removeEventListener('canplay', jump)
-          if (hls) hls.off(Hls.Events.LEVEL_UPDATED, jump)
-          clearTimeout(timer)
-        }
-        function jump() {
-          if (done) return
-          const sk = v!.seekable
-          if (sk.length > 0) {
-            done = true
-            v!.currentTime = Math.max(sk.start(0), sk.end(sk.length - 1) - 1.5)
-          } else if (hls?.liveSyncPosition != null) {
-            done = true
-            v!.currentTime = hls.liveSyncPosition
-          } else {
-            return
-          }
-          v!.play().catch(() => {})
-          cleanup()
-        }
-        if (hls) hls.on(Hls.Events.LEVEL_UPDATED, jump)
-        v.addEventListener('canplay', jump)
-        timer = window.setTimeout(jump, 2500)
-        jump()
-      }
-
       const onVisibility = () => {
         const video = videoRef.current
         const audio = audioRef.current
@@ -345,15 +308,26 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
 
           if (isSwappedRef.current && hls && audio) {
-            // Swap back from audio to video, then jump to live.
+            // Swap back from audio to video
+            const wasPaused = audio.paused
             audio.pause()
             hls.detachMedia()
             hls.attachMedia(video)
             isSwappedRef.current = false
+            video.addEventListener('canplay', () => {
+              const pos = hls.liveSyncPosition
+              if (pos != null) video.currentTime = pos
+              if (!wasPaused) video.play().catch(() => {})
+            }, { once: true })
+          } else {
+            // Not swapped (was in PiP or native HLS) — seek to live edge for
+            // genuinely live streams only (VOD/ENDLIST keeps its position).
+            if (hls && video.duration === Infinity) {
+              const pos = hls.liveSyncPosition
+              if (pos != null) video.currentTime = pos
+            }
+            video.play().catch(() => {})
           }
-          // Always resync to the live edge on return (the reported i24 bug:
-          // it used to resume at a stale position and never catch up).
-          resyncToLive()
         }
       }
 
