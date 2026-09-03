@@ -6,6 +6,7 @@ import { PlayerControls } from './PlayerControls'
 import { Spinner } from '../ui/Spinner'
 import { useTvStore } from '../../stores/tvStore'
 import { usePiP } from '../../hooks/usePiP'
+import { useFullscreen } from '../../hooks/useFullscreen'
 import { useMediaSession } from '../../hooks/useMediaSession'
 import { useWakeLock } from '../../hooks/useWakeLock'
 import type { Channel } from '../../types'
@@ -50,6 +51,8 @@ export function PlayerContainer() {
 
   const playerRef = useRef<VideoPlayerHandle>(null)
   const videoElementRef = useRef<HTMLVideoElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const { isFullscreen, isImmersive, toggle: toggleFullscreen } = useFullscreen(containerRef)
 
   // Sync video element ref for PiP
   const updateVideoRef = useCallback(() => {
@@ -90,7 +93,10 @@ export function PlayerContainer() {
 
   return (
     <div
-      className="player-container relative aspect-video w-full overflow-hidden rounded-xl bg-black"
+      ref={containerRef}
+      className={`player-container relative aspect-video w-full overflow-hidden rounded-xl bg-black ${
+        isImmersive ? 'player-immersive' : ''
+      }`}
       onMouseMove={resetControlsTimer}
       onTouchStart={resetControlsTimer}
       onClick={resetControlsTimer}
@@ -108,7 +114,7 @@ export function PlayerContainer() {
 
       {/* Now-playing channel label — fades with the controls */}
       <div
-        className={`pointer-events-none absolute top-0 inset-x-0 bg-gradient-to-b from-black/70 to-transparent p-3 transition-opacity duration-300 ${
+        className={`player-topbar pointer-events-none absolute top-0 inset-x-0 bg-gradient-to-b from-black/70 to-transparent p-3 transition-opacity duration-300 ${
           showControls && !error ? 'opacity-100' : 'opacity-0'
         }`}
       >
@@ -160,7 +166,7 @@ export function PlayerContainer() {
 
       {/* Controls overlay */}
       <div
-        className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-8 transition-opacity duration-300 ${
+        className={`player-dock absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-8 transition-opacity duration-300 ${
           showControls ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
       >
@@ -170,6 +176,8 @@ export function PlayerContainer() {
           isPiPSupported={isPiPSupported && isHls}
           onPiPToggle={togglePiP}
           isPiP={isPiP}
+          isFullscreen={isFullscreen}
+          onFullscreenToggle={toggleFullscreen}
         />
       </div>
     </div>

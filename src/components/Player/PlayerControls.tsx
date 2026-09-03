@@ -9,9 +9,19 @@ interface PlayerControlsProps {
   isPiPSupported: boolean
   onPiPToggle: () => void
   isPiP: boolean
+  isFullscreen: boolean
+  onFullscreenToggle: () => void
 }
 
-export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, isPiP }: PlayerControlsProps) {
+export function PlayerControls({
+  playerRef,
+  isHls,
+  isPiPSupported,
+  onPiPToggle,
+  isPiP,
+  isFullscreen,
+  onFullscreenToggle,
+}: PlayerControlsProps) {
   const [isPlaying, setIsPlaying] = useState(true)
   const [isMuted, setIsMuted] = useState(false)
   const [isAtLive, setIsAtLive] = useState(true)
@@ -74,17 +84,6 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
     if (video) {
       video.muted = !video.muted
       setIsMuted(video.muted)
-    }
-  }
-
-  const toggleFullscreen = () => {
-    const video = playerRef.current?.getVideo()
-    if (!video) return
-    const container = video.closest('.player-container')
-    if (document.fullscreenElement) {
-      document.exitFullscreen()
-    } else {
-      (container ?? video).requestFullscreen?.()
     }
   }
 
@@ -178,13 +177,19 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
 
           {/* Fullscreen */}
           <button
-            onClick={toggleFullscreen}
+            onClick={onFullscreenToggle}
             className="rounded-xl p-2 text-white/70 transition hover:bg-white/10 hover:text-white active:scale-90"
-            aria-label="מסך מלא"
+            aria-label={isFullscreen ? 'צא ממסך מלא' : 'מסך מלא'}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-              <path d="M3 8V5a2 2 0 012-2h3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M21 16v3a2 2 0 01-2 2h-3" />
-            </svg>
+            {isFullscreen ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <path d="M9 3v3a2 2 0 01-2 2H4M15 3v3a2 2 0 002 2h3M9 21v-3a2 2 0 00-2-2H4M15 21v-3a2 2 0 012-2h3" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <path d="M3 8V5a2 2 0 012-2h3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M21 16v3a2 2 0 01-2 2h-3" />
+              </svg>
+            )}
           </button>
         </div>
       </div>

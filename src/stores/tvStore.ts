@@ -27,9 +27,12 @@ interface TvState {
   currentChannel: Channel
   isLoading: boolean
   error: string | null
+  /** Player is expanded to cover the viewport via CSS (see useFullscreen). */
+  isImmersive: boolean
   setChannel: (channel: Channel) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
+  setImmersive: (immersive: boolean) => void
   nextChannel: () => void
   prevChannel: () => void
 }
@@ -42,12 +45,14 @@ export const useTvStore = create<TvState>((set, get) => ({
   })(),
   isLoading: false,
   error: null,
+  isImmersive: false,
   setChannel: (channel) => {
     safeSetItem(LAST_CHANNEL_KEY, channel.id)
     set({ currentChannel: channel, isLoading: true, error: null })
   },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error, isLoading: false }),
+  setImmersive: (isImmersive) => set({ isImmersive }),
   nextChannel: () => {
     const { channels, currentChannel } = get()
     const idx = channels.findIndex((c) => c.id === currentChannel.id)

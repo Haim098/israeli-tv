@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useTvStore } from '../stores/tvStore'
 
 /**
  * Actively locks the app to portrait at runtime — more reliable than the
@@ -9,6 +10,10 @@ import { useEffect } from 'react'
  * a plain browser tab where lock() is rejected outside fullscreen).
  */
 export function useOrientationLock() {
+  // CSS-based fullscreen (useFullscreen) has no `fullscreenchange` event of its
+  // own, so the lock has to react to the store flag as well.
+  const isImmersive = useTvStore((s) => s.isImmersive)
+
   useEffect(() => {
     const orientation = screen.orientation as ScreenOrientation & {
       lock?: (orientation: 'portrait' | 'any') => Promise<void>
@@ -20,7 +25,8 @@ export function useOrientationLock() {
       // active during manual PiP constrains the resizable floating window
       // (white margins / can't enlarge); auto-PiP didn't hit this because it
       // enters from the already-relaxed fullscreen state.
-      const relaxed = !!document.fullscreenElement || !!document.pictureInPictureElement
+      const relaxed =
+        isImmersive || !!document.fullscreenElement || !!document.pictureInPictureElement
       orientation.lock!(relaxed ? 'any' : 'portrait').catch(() => {})
     }
 
@@ -35,5 +41,5 @@ export function useOrientationLock() {
       document.removeEventListener('enterpictureinpicture', apply, true)
       document.removeEventListener('leavepictureinpicture', apply, true)
     }
-  }, [])
+  }, [isImmersive])
 }

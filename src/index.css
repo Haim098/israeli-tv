@@ -89,3 +89,48 @@ input:focus-visible {
   border: none;
   box-shadow: 0 0 0 2px rgba(0,0,0,0.4);
 }
+
+/* ---------------------------------------------------------------------------
+   Immersive (CSS) fullscreen — see hooks/useFullscreen.ts.
+   The player covers the viewport without the Fullscreen API, so Chrome on
+   Android never paints its non-dismissible "swipe down to exit full screen"
+   bubble over our control bar.
+   Two class selectors so these win over the element's Tailwind utilities.
+--------------------------------------------------------------------------- */
+.player-container.player-immersive {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: #000;
+}
+
+html.immersive-active,
+html.immersive-active body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Keep the overlays clear of the notch / gesture bar while expanded. */
+.player-container.player-immersive .player-topbar {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
+}
+.player-container.player-immersive .player-dock {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
+}
+
+/* Native fullscreen is still used on pointer devices (and as a fallback). Where
+   the browser draws its exit hint along the bottom edge, lift the controls
+   clear of it so the bar stays readable and tappable. */
+.player-container:fullscreen .player-dock {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
+}
+@media (pointer: coarse) {
+  .player-container:fullscreen .player-dock {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4.5rem);
+  }
+}
