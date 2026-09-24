@@ -14,6 +14,7 @@
  */
 
 import { fetchWithTimeout } from './fetchUtils'
+import { assertPlaylistIsLive } from './hlsLive'
 
 // Source 1: official-site feed (no auth, no token).
 const DIRECT_URL = 'https://i24newshebrew-cdn.encoders.immergo.tv/master.m3u8'
@@ -21,10 +22,6 @@ const DIRECT_URL = 'https://i24newshebrew-cdn.encoders.immergo.tv/master.m3u8'
 // Source 2: Wiztivi resolver endpoints.
 const AUTH_URL = 'https://api.i24news.wiztivi.io/authenticate'
 const CONTENT_URL = 'https://api.i24news.wiztivi.io/contents'
-
-// Treat the playlist as stale if its most recent segment is older than this.
-// Live HLS windows are normally <30s; >2min is upstream-frozen, not lag.
-const MAX_LIVE_LAG_MS = 120_000
 
 export interface I24StaleError extends Error {
   /** Hebrew message safe to surface in the UI error overlay. */
@@ -58,7 +55,7 @@ async function resolveI24(): Promise<string> {
   // Source 1: direct immergo feed. Short cache — the URL is static and
   // tokenless, but we still want a frozen feed to be re-checked soon.
   try {
-    await assertPlaylistIsLive(DIRECT_URL)
+    await assertPlaylistIsLive(DIRECT_URL, makeStaleError)
     cached = { url: DIRECT_URL, expiresAt: Date.now() + 5 * 60_000 }
     return DIRECT_URL
   } catch {
@@ -67,7 +64,7 @@ async function resolveI24(): Promise<string> {
 
   try {
     const url = await resolveViaWiztivi()
-    await assertPlaylistIsLive(url)
+    await assertPlaylistIsLive(url, makeStaleError)
     // Cache for 50 minutes (hdnea token expires at ~60min)
     cached = { url, expiresAt: Date.now() + 50 * 60_000 }
     return url
@@ -98,43 +95,4 @@ async function resolveViaWiztivi(): Promise<string> {
   if (!hebrew?.customFields?.m3u8) throw new Error('Hebrew stream not found')
 
   return hebrew.customFields.m3u8
-}
-
-async function assertPlaylistIsLive(masterUrl: string): Promise<void> {
-  // Fetch the master playlist, pick the first variant chunklist, and inspect
-  // its tags. We bail with a friendly error rather than playing stale content.
-  const masterResp = await fetchWithTimeout(masterUrl)
-  const masterText = await masterResp.text()
-
-  // Masters list chunklists relative to the master URL's directory (e.g.
-  // `chunklist__2.m3u8` or `0/streamPlaylist.m3u8`). Resolve via URL().
-  const variant = masterText
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('#'))
-  if (!variant) throw makeStaleError('no variant in master playlist')
-
-  const variantUrl = new URL(variant, masterUrl).toString()
-  const chunkResp = await fetchWithTimeout(variantUrl)
-  const chunkText = await chunkResp.text()
-
-  // ENDLIST means the upstream has marked this playlist as VOD — for a live
-  // channel that's a broken state.
-  if (chunkText.includes('#EXT-X-ENDLIST')) {
-    throw makeStaleError('playlist has #EXT-X-ENDLIST (VOD)')
-  }
-
-  // PROGRAM-DATE-TIME tells us how recent the last segment really is. If the
-  // newest one is hours/days old, the upstream is frozen.
-  const pdtMatches = chunkText.match(/#EXT-X-PROGRAM-DATE-TIME:([^\s]+)/g)
-  if (pdtMatches?.length) {
-    const lastPdt = pdtMatches[pdtMatches.length - 1].replace('#EXT-X-PROGRAM-DATE-TIME:', '')
-    const lastTime = Date.parse(lastPdt)
-    if (Number.isFinite(lastTime)) {
-      const lagMs = Date.now() - lastTime
-      if (lagMs > MAX_LIVE_LAG_MS) {
-        throw makeStaleError(`segment lag ${Math.round(lagMs / 1000)}s exceeds ${MAX_LIVE_LAG_MS / 1000}s`)
-      }
-    }
-  }
 }
