@@ -86,7 +86,7 @@ israeli-tv/
 │       ├── keshet12.svg
 │       ├── reshet13.svg
 │       ├── channel14.svg
-│       ├── channel16.svg
+│       ├── channel16.png
 │       └── knesset.svg
 │
 ├── src/                          # קוד המקור
