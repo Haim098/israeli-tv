@@ -53,7 +53,6 @@ export const channels: Channel[] = [
     // resolver checks it is actually live and otherwise surfaces an "off the
     // air" message — the channel doesn't broadcast on Shabbat and holidays.
     type: 'hls',
-    // Original logo still needed: not reachable from the build environment.
     logo: '/logos/channel16.png',
     color: '#7b2cbf',
     resolveUrl: getChannel16Url,
