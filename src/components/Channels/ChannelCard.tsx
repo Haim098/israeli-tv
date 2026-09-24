@@ -43,14 +43,6 @@ export function ChannelCard({ channel, isActive, onSelect }: ChannelCardProps) {
           אתר
         </span>
       )}
-
-      {/* Active indicator dot */}
-      {isActive && (
-        <span
-          className="absolute -top-1 start-1/2 h-2 w-2 -translate-x-1/2 rounded-full"
-          style={{ backgroundColor: channel.color }}
-        />
-      )}
     </button>
   )
 }

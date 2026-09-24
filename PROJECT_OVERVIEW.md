@@ -33,6 +33,7 @@
 | קשת 12 | 12 | `keshet12` | HLS עם טוקן דינמי (AES-192-CBC) |
 | רשת 13 | 13 | `reshet13` | HLS ישיר |
 | ערוץ 14 | 14 | `channel14` | HLS ישיר |
+| ערוץ 16 | 16 | `channel16` | HLS ישיר (immergo) + בדיקת לייב |
 | ערוץ הכנסת | 99 | `knesset` | HLS ישיר |
 
 ---
@@ -85,6 +86,7 @@ israeli-tv/
 │       ├── keshet12.svg
 │       ├── reshet13.svg
 │       ├── channel14.svg
+│       ├── channel16.png
 │       └── knesset.svg
 │
 ├── src/                          # קוד המקור
@@ -196,6 +198,17 @@ CDN: Redge Media (ישראלי) - אותו CDN כמו כאן 11
 
 **איך זה עובד:** בדיוק כמו כאן 11 - ערוץ 14 משתמש באותו CDN ישראלי (Redge Media). פשוט כתובת HLS ישירה ללא הגנה. זהו הערוץ היחיד ללא גיבוי.
 
+### ערוץ 16 (Channel 16)
+
+```
+כתובת: https://ch16israel-cdn.encoders.immergo.tv/master.m3u8
+CDN: immergo (CloudFront) - אותו ספק כמו הפיד הרשמי של i24
+אימות: אין - הסטרים פתוח
+גיבוי: אין - אם הסטרים לא בשידור, מוצגת הודעה ידידותית
+```
+
+**איך זה עובד:** ערוץ מסחרי חדש (שידורי ניסיון מ-28.6.2026). הכתובת קבועה ופתוחה, אבל הערוץ **לא משדר בשבתות ובחגים**. לכן יש resolver (`src/lib/channel16.ts`) שבודק לפני הניגון שה-playlist באמת חי (ללא `#EXT-X-ENDLIST`, ו-`PROGRAM-DATE-TIME` עדכני), ואם לא - מציג "ערוץ 16 אינו משדר כרגע" במקום ספינר אינסופי. בדיקת הלייב משותפת עם i24 (`src/lib/hlsLive.ts`).
+
 ### ערוץ הכנסת (Knesset Channel)
 
 ```
@@ -215,6 +228,7 @@ CDN: GoStreaming
 | קשת 12 | Akamai/Mako | ✅ כן (AES + טוקן) | iframe | **מורכב מאוד** |
 | רשת 13 | Kaltura | ❌ לא | iframe | קל |
 | ערוץ 14 | Redge Media | ❌ לא | אין | קל |
+| ערוץ 16 | immergo | ❌ לא | אין (הודעת "לא משדר") | קל |
 | הכנסת | GoStreaming | ❌ לא | HLS חלופי | קל |
 
 ---
@@ -409,6 +423,7 @@ document.addEventListener('visibilitychange', () => {
 | קשת 12 | 🩷 `#e6007e` |
 | רשת 13 | 🟠 `#ff6600` |
 | ערוץ 14 | 🔴 `#cc0000` |
+| ערוץ 16 | 🟣 `#7b2cbf` |
 | הכנסת | 🔷 `#1a5276` |
 
 ```css

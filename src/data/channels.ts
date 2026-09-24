@@ -1,6 +1,7 @@
 import type { Channel } from '../types'
 import { getKeshet12Url } from '../lib/keshet12'
 import { getI24NewsUrl } from '../lib/i24news'
+import { getChannel16Url } from '../lib/channel16'
 
 export const channels: Channel[] = [
   {
@@ -42,6 +43,19 @@ export const channels: Channel[] = [
     type: 'hls',
     logo: '/logos/channel14.png',
     color: '#cc0000',
+  },
+  {
+    id: 'channel16',
+    name: 'ערוץ 16',
+    number: 16,
+    streamUrl: 'https://ch16israel-cdn.encoders.immergo.tv/master.m3u8',
+    // No fallbackUrl: like i24, the feed is a tokenless immergo stream. The
+    // resolver checks it is actually live and otherwise surfaces an "off the
+    // air" message — the channel doesn't broadcast on Shabbat and holidays.
+    type: 'hls',
+    logo: '/logos/channel16.png',
+    color: '#7b2cbf',
+    resolveUrl: getChannel16Url,
   },
   {
     id: 'i24news',
