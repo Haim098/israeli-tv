@@ -84,7 +84,9 @@ export function PlayerContainer() {
   // Double-tap the left/right side of the video to skip back/forward 10s
   // (further quick taps keep adding, like YouTube).
   const lastTapRef = useRef<{ time: number; side: SkipSide | null }>({ time: 0, side: null })
-  const [skipFlash, setSkipFlash] = useState<{ side: SkipSide; seconds: number } | null>(null)
+  // `id` changes on every skip so the indicator remounts and its animation
+  // restarts, even when chained taps keep it on screen.
+  const [skipFlash, setSkipFlash] = useState<{ side: SkipSide; seconds: number; id: number } | null>(null)
   const skipFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (skipFlashTimerRef.current) clearTimeout(skipFlashTimerRef.current) }, [])
 
@@ -102,9 +104,10 @@ export function PlayerContainer() {
     setSkipFlash((prev) => ({
       side,
       seconds: prev && prev.side === side ? prev.seconds + SKIP_SECONDS : SKIP_SECONDS,
+      id: (prev?.id ?? 0) + 1,
     }))
     if (skipFlashTimerRef.current) clearTimeout(skipFlashTimerRef.current)
-    skipFlashTimerRef.current = setTimeout(() => setSkipFlash(null), 700)
+    skipFlashTimerRef.current = setTimeout(() => setSkipFlash(null), 820)
   }
 
   const onFallbackToIframe = useCallback((url: string) => {
@@ -165,14 +168,38 @@ export function PlayerContainer() {
         />
       )}
 
+      {/* Double-tap skip indicator: a soft shade on that side plus the
+          seconds and a double chevron sliding in the skip direction. */}
       {skipFlash && (
-        <div
-          className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full bg-black/55 px-4 py-2 text-sm font-semibold text-white ${
-            skipFlash.side === 'fwd' ? 'right-6' : 'left-6'
-          }`}
-          dir="rtl"
-        >
-          {skipFlash.side === 'fwd' ? `${skipFlash.seconds} שניות קדימה ⏩` : `⏪ ${skipFlash.seconds} שניות אחורה`}
+        <div key={skipFlash.id} className="pointer-events-none absolute inset-0" aria-hidden="true">
+          <div
+            className={`skip-glow absolute inset-y-0 w-[46%] from-black/55 to-transparent ${
+              skipFlash.side === 'fwd' ? 'right-0 bg-gradient-to-l' : 'left-0 bg-gradient-to-r'
+            }`}
+          />
+          <div
+            className={`absolute top-1/2 flex items-center gap-2 text-white ${
+              skipFlash.side === 'fwd' ? 'skip-slide-fwd right-[9%]' : 'skip-slide-back left-[9%] flex-row-reverse'
+            }`}
+            dir="ltr"
+          >
+            <div className="flex flex-col items-center leading-none">
+              <span className="text-3xl font-light tracking-tight">{skipFlash.seconds}</span>
+              <span className="mt-1 text-[11px] font-medium text-white/75">שניות</span>
+            </div>
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-[22px] w-[22px] ${skipFlash.side === 'back' ? '-scale-x-100' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6 6l6 6-6 6" />
+              <path d="M13 6l6 6-6 6" />
+            </svg>
+          </div>
         </div>
       )}
 
