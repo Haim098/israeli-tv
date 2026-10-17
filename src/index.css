@@ -39,6 +39,32 @@ video.pip-staging {
   object-fit: contain;
 }
 
+/* Double-tap skip indicator (PlayerContainer). The wrapper remounts on every
+   skip, so each tap replays these from the start. */
+@keyframes skip-glow {
+  0% { opacity: 0; }
+  20%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes skip-slide-fwd {
+  0% { opacity: 0; transform: translate(-10px, -50%); }
+  22% { opacity: 1; transform: translate(0, -50%); }
+  72% { opacity: 1; }
+  100% { opacity: 0; transform: translate(6px, -50%); }
+}
+@keyframes skip-slide-back {
+  0% { opacity: 0; transform: translate(10px, -50%); }
+  22% { opacity: 1; transform: translate(0, -50%); }
+  72% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-6px, -50%); }
+}
+.skip-glow { animation: skip-glow 800ms ease-out forwards; }
+.skip-slide-fwd { animation: skip-slide-fwd 800ms cubic-bezier(.2,.8,.2,1) forwards; }
+.skip-slide-back { animation: skip-slide-back 800ms cubic-bezier(.2,.8,.2,1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .skip-slide-fwd, .skip-slide-back { animation-name: skip-glow; transform: translateY(-50%); }
+}
+
 /* Active channel glow */
 .channel-active-glow {
   box-shadow: 0 0 28px var(--glow-color, rgba(255,255,255,0.3));
