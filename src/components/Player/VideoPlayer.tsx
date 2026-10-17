@@ -24,11 +24,24 @@ function isVideoInPiP(video: HTMLVideoElement): boolean {
   return document.pictureInPictureElement === video || webkitMode === 'picture-in-picture'
 }
 
+// True when the whole app window has been shrunk into Android's system PiP
+// (the fullscreen-swipe path). That path doesn't use the PiP web API, so there
+// is no pictureInPictureElement — but the window becomes a small fraction of the
+// screen. A maximised PiP window is still ~25% of a portrait phone screen, while
+// split-screen is ~50%, so 35% separates them.
+function isWindowInSystemPiP(): boolean {
+  const screenArea = window.screen.width * window.screen.height
+  if (!screenArea) return false
+  return (window.innerWidth * window.innerHeight) / screenArea < 0.35
+}
+
 interface VideoPlayerProps {
   channel: Channel
   /** Bumped by the retry button to force a fresh resolve (cache-bypassing). */
   retryNonce?: number
   onFallbackToIframe?: (url: string) => void
+  /** Receives the <video> element on mount (and null on unmount). */
+  onVideoElement?: (video: HTMLVideoElement | null) => void
 }
 
 export interface VideoPlayerHandle {
@@ -38,17 +51,30 @@ export interface VideoPlayerHandle {
   togglePlay: () => void
   isPlaying: () => boolean
   seekTo: (time: number) => void
+  /** Jump by ±seconds, clamped to the seekable (DVR) window. */
+  skip: (seconds: number) => void
+  /** Kick a stalled stream back into loading (e.g. after the network returns). */
+  recover: () => void
   getCurrentTime: () => number
   getSeekableRange: () => { start: number; end: number } | null
   getLiveSyncPosition: () => number | null
 }
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  function VideoPlayer({ channel, retryNonce = 0, onFallbackToIframe }, ref) {
-    const videoRef = useRef<HTMLVideoElement>(null)
+  function VideoPlayer({ channel, retryNonce = 0, onFallbackToIframe, onVideoElement }, ref) {
+    const videoRef = useRef<HTMLVideoElement | null>(null)
     const audioRef = useRef<HTMLAudioElement>(null)
     const hlsRef = useRef<Hls | null>(null)
     const isSwappedRef = useRef(false)
+    // What the *user* wants: playing or paused. Background/foreground
+    // transitions follow this instead of blindly resuming, so a video the user
+    // paused stays paused when the app is left, a PiP window is closed, or the
+    // app is reopened. Updated by explicit actions (controls, notification /
+    // PiP buttons, tap-to-play) and by play/pause events while the page is
+    // visible; ignored while hidden, where the browser itself pauses/detaches.
+    const wantsPlayRef = useRef(true)
+    // Listeners of the current native-HLS (iOS) load, dropped on the next load.
+    const nativeLoadAbortRef = useRef<AbortController | null>(null)
     // Always points at the active channel, so the async error handler (which
     // outlives the render that created it) reads the current channel rather
     // than a stale closure.
@@ -58,26 +84,39 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const resolveAttemptsRef = useRef(0)
     const setLoading = useTvStore((s) => s.setLoading)
     const setError = useTvStore((s) => s.setError)
+    const setPlaying = useTvStore((s) => s.setPlaying)
     // Autoplay with sound is blocked without a user gesture (e.g. cold PWA
     // launch) — show a tap-to-play affordance instead of a silent dead frame.
     const [showTapToPlay, setShowTapToPlay] = useState(false)
 
     const MAX_RESOLVE_ATTEMPTS = 3
 
+    const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
+      videoRef.current = el
+      onVideoElement?.(el)
+    }, [onVideoElement])
+
+    const activeEl = () => (isSwappedRef.current ? audioRef.current : videoRef.current)
+
+    const play = useCallback(() => {
+      wantsPlayRef.current = true
+      activeEl()?.play().catch(() => {})
+    }, [])
+
+    const pause = useCallback(() => {
+      wantsPlayRef.current = false
+      activeEl()?.pause()
+    }, [])
+
     useImperativeHandle(ref, () => ({
       getVideo: () => videoRef.current,
-      play: () => {
-        const el = isSwappedRef.current ? audioRef.current : videoRef.current
-        el?.play()
-      },
-      pause: () => {
-        const el = isSwappedRef.current ? audioRef.current : videoRef.current
-        el?.pause()
-      },
+      play,
+      pause,
       togglePlay: () => {
-        const el = isSwappedRef.current ? audioRef.current : videoRef.current
+        const el = activeEl()
         if (!el) return
-        el.paused ? el.play() : el.pause()
+        if (el.paused) play()
+        else pause()
       },
       isPlaying: () => {
         const el = isSwappedRef.current ? audioRef.current : videoRef.current
@@ -97,13 +136,35 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         return { start: video.seekable.start(0), end: video.seekable.end(0) }
       },
       getLiveSyncPosition: () => hlsRef.current?.liveSyncPosition ?? null,
-    }))
+      skip: (seconds: number) => {
+        const el = activeEl()
+        const video = videoRef.current
+        if (!el || !video) return
+        const target = el.currentTime + seconds
+        el.currentTime = video.seekable.length > 0
+          ? Math.max(video.seekable.start(0), Math.min(target, video.seekable.end(0)))
+          : target
+      },
+      recover: () => {
+        const hls = hlsRef.current
+        const video = videoRef.current
+        if (!hls || !video || isSwappedRef.current) return
+        // Only nudge a stream that is actually starved — restarting a healthy
+        // loader would cause a needless hiccup.
+        if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+          hls.startLoad(video.currentTime, true)
+        }
+        if (wantsPlayRef.current) video.play().catch(() => {})
+      },
+    }), [play, pause])
 
     const loadStream = useCallback((url: string) => {
       const video = videoRef.current
       if (!video) return
 
       setShowTapToPlay(false)
+      nativeLoadAbortRef.current?.abort()
+      nativeLoadAbortRef.current = null
 
       // Cleanup previous instance
       if (hlsRef.current) {
@@ -204,12 +265,16 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
         })
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // iOS Safari — native HLS
+        // iOS Safari — native HLS. Tie the one-shot listeners to this load so
+        // a channel switch drops them instead of letting a stale error handler
+        // fire (with the old URL) on the next channel.
+        const loadAbort = new AbortController()
+        nativeLoadAbortRef.current = loadAbort
         video.src = url
         video.addEventListener('loadedmetadata', () => {
           setLoading(false)
           video.play().catch(() => {})
-        }, { once: true })
+        }, { once: true, signal: loadAbort.signal })
 
         video.addEventListener('error', () => {
           const ch = channelRef.current
@@ -222,7 +287,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           } else {
             setError('שגיאה בטעינת השידור')
           }
-        }, { once: true })
+        }, { once: true, signal: loadAbort.signal })
       } else {
         setError('הדפדפן אינו תומך בהפעלת וידאו')
       }
@@ -235,6 +300,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       // newly selected channel.
       channelRef.current = channel
       resolveAttemptsRef.current = 0
+      // A freshly selected channel should start playing.
+      wantsPlayRef.current = true
       setLoading(true)
 
       if (channel.resolveUrl) {
@@ -265,6 +332,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       return () => {
         cancelled = true
+        nativeLoadAbortRef.current?.abort()
+        nativeLoadAbortRef.current = null
         if (hlsRef.current) {
           hlsRef.current.destroy()
           hlsRef.current = null
@@ -272,7 +341,36 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
     }, [channel, retryNonce, loadStream, setLoading, setError, onFallbackToIframe])
 
-    // Background playback: auto-PiP first, fall back to audio swap
+    // Mirror the real play state (of whichever element is active) into the
+    // store — drives the wake lock and controls — and into the Media Session,
+    // so the notification / Dynamic Island icon matches reality. While the
+    // page is visible, play/pause events also record the user's intent (this
+    // catches pause/play from places we don't route, like native controls).
+    useEffect(() => {
+      const video = videoRef.current
+      const audio = audioRef.current
+      const sync = (e: Event) => {
+        if (e.target === video && document.visibilityState === 'visible' && !isSwappedRef.current) {
+          if (e.type === 'play') wantsPlayRef.current = true
+          else if (e.type === 'pause' && video?.currentSrc) wantsPlayRef.current = false
+        }
+        const el = isSwappedRef.current ? audio : video
+        const playing = !!el && !el.paused
+        setPlaying(playing)
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
+        }
+      }
+      const events = ['play', 'pause', 'playing', 'emptied'] as const
+      for (const el of [video, audio]) events.forEach((ev) => el?.addEventListener(ev, sync))
+      return () => {
+        for (const el of [video, audio]) events.forEach((ev) => el?.removeEventListener(ev, sync))
+        setPlaying(false)
+      }
+    }, [setPlaying])
+
+    // Background playback: auto-PiP first, fall back to audio swap — but only
+    // when the user actually wants it playing.
     useEffect(() => {
       const swapToAudio = () => {
         const hls = hlsRef.current
@@ -290,46 +388,74 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         isSwappedRef.current = true
       }
 
+      // Closing the floating window with X means "stop", like YouTube.
+      const stopPlayback = () => {
+        wantsPlayRef.current = false
+        videoRef.current?.pause()
+        audioRef.current?.pause()
+      }
+
+      // When the (visible) window shrank into system PiP. A hidden event only
+      // counts as "closed with X" if the window had been sitting in PiP for a
+      // while — not if it fires mid-transition while entering PiP.
+      let systemPiPSince: number | null = null
+      const onResize = () => {
+        if (document.visibilityState === 'visible' && isWindowInSystemPiP()) {
+          systemPiPSince ??= performance.now()
+        } else {
+          systemPiPSince = null
+        }
+      }
+
       const onVisibility = () => {
         const video = videoRef.current
         const audio = audioRef.current
         const hls = hlsRef.current
 
         if (document.visibilityState === 'hidden' && video && backgroundPlaybackEnabled) {
-          // Already in a PiP window (manual button, or fullscreen-swipe native
-          // auto-PiP) — leave it; swapping to audio would detach & freeze it.
+          // Paused by the user — leaving the app must not start anything.
+          if (!wantsPlayRef.current) return
+          // Already in a PiP-API window (manual button) — leave it; swapping to
+          // audio would detach & freeze it.
           if (isVideoInPiP(video)) return
-          // Otherwise give the native `autopictureinpicture` attribute a beat to
-          // engage (the fullscreen-swipe → floating-video path); if no PiP
-          // window appears, fall back to audio-only so playback always
-          // continues in the background. The short delay is what removes the
-          // race that previously froze the video or dropped playback entirely.
-          // (We don't call requestPictureInPicture() here — it needs a user
-          // gesture and is rejected from visibilitychange.)
+          // The app window was in Android's system PiP (fullscreen-swipe path)
+          // and is now going away: that's the X button. Stop instead of
+          // continuing as background audio.
+          if (systemPiPSince != null && performance.now() - systemPiPSince > 1000 && isWindowInSystemPiP()) {
+            systemPiPSince = null
+            stopPlayback()
+            return
+          }
+          // Otherwise give native auto-PiP a beat to engage; if no PiP window
+          // appears, fall back to audio-only so playback continues in the
+          // background. (requestPictureInPicture() can't be called here — it
+          // needs a user gesture.)
           window.setTimeout(() => {
-            if (document.visibilityState === 'hidden' && !isVideoInPiP(video)) {
+            if (document.visibilityState === 'hidden' && wantsPlayRef.current && !isVideoInPiP(video)) {
               swapToAudio()
             }
           }, 300)
         } else if (document.visibilityState === 'visible' && video) {
+          onResize()
           // Exit PiP if active
           if (document.pictureInPictureElement) {
             document.exitPictureInPicture().catch(() => {})
           }
 
+          const shouldPlay = wantsPlayRef.current
           if (isSwappedRef.current && hls && audio) {
             // Swap back from audio to video
-            const wasPaused = audio.paused
             audio.pause()
             hls.detachMedia()
             hls.attachMedia(video)
             isSwappedRef.current = false
             video.addEventListener('canplay', () => {
+              if (!shouldPlay) return
               const pos = hls.liveSyncPosition
               if (pos != null) video.currentTime = pos
-              if (!wasPaused) video.play().catch(() => {})
+              video.play().catch(() => {})
             }, { once: true })
-          } else {
+          } else if (shouldPlay) {
             // Not swapped (was in PiP or native HLS) — seek to live edge for
             // genuinely live streams only (VOD/ENDLIST keeps its position).
             if (hls && video.duration === Infinity) {
@@ -341,16 +467,23 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         }
       }
 
-      // If PiP closes while still in background, fall back to audio (mobile only)
+      // The PiP-API window closed while the app is in the background. Wait a
+      // beat: tapping "expand" also fires this, followed by the page becoming
+      // visible — only a close (X) leaves us hidden.
       const onLeavePiP = () => {
-        if (backgroundPlaybackEnabled && document.visibilityState === 'hidden') swapToAudio()
+        if (!backgroundPlaybackEnabled || document.visibilityState !== 'hidden') return
+        window.setTimeout(() => {
+          if (document.visibilityState === 'hidden') stopPlayback()
+        }, 500)
       }
 
       const video = videoRef.current
       document.addEventListener('visibilitychange', onVisibility)
+      window.addEventListener('resize', onResize)
       video?.addEventListener('leavepictureinpicture', onLeavePiP)
       return () => {
         document.removeEventListener('visibilitychange', onVisibility)
+        window.removeEventListener('resize', onResize)
         video?.removeEventListener('leavepictureinpicture', onLeavePiP)
       }
     }, [])
@@ -358,20 +491,20 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     return (
       <>
         <video
-          ref={videoRef}
+          ref={setVideoRef}
           className="h-full w-full object-contain bg-black"
           playsInline
-          // @ts-ignore non-standard attributes
           webkit-playsinline=""
           autoPlay
           muted={false}
-          // @ts-ignore autopictureinpicture is not yet in TS types
+          // @ts-expect-error autopictureinpicture is not yet in TS types
           autopictureinpicture={backgroundPlaybackEnabled ? '' : undefined}
         />
         <audio ref={audioRef} hidden />
         {showTapToPlay && (
           <button
             onClick={() => {
+              wantsPlayRef.current = true
               const v = videoRef.current
               v?.play().then(() => setShowTapToPlay(false)).catch(() => {})
             }}

@@ -2,27 +2,22 @@
 import { LiveBadge } from './LiveBadge'
 import { SeekBar } from './SeekBar'
 import type { VideoPlayerHandle } from './VideoPlayer'
+import { useTvStore } from '../../stores/tvStore'
 
 interface PlayerControlsProps {
   playerRef: React.RefObject<VideoPlayerHandle | null>
+  /** The live <video> element (state, so listeners re-bind if it remounts). */
+  video: HTMLVideoElement | null
   isHls: boolean
   isPiPSupported: boolean
   onPiPToggle: () => void
   isPiP: boolean
 }
 
-export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, isPiP }: PlayerControlsProps) {
-  const [isPlaying, setIsPlaying] = useState(true)
+export function PlayerControls({ playerRef, video, isHls, isPiPSupported, onPiPToggle, isPiP }: PlayerControlsProps) {
+  const isPlaying = useTvStore((s) => s.isPlaying)
   const [isMuted, setIsMuted] = useState(false)
   const [isAtLive, setIsAtLive] = useState(true)
-
-  const syncState = useCallback(() => {
-    const video = playerRef.current?.getVideo()
-    if (video) {
-      setIsPlaying(!video.paused)
-      setIsMuted(video.muted)
-    }
-  }, [playerRef])
 
   const syncLiveState = useCallback(() => {
     const handle = playerRef.current
@@ -45,40 +40,30 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
   }, [playerRef])
 
   useEffect(() => {
-    const video = playerRef.current?.getVideo()
     if (!video) return
-    const events = ['play', 'pause', 'volumechange'] as const
-    events.forEach((e) => video.addEventListener(e, syncState))
+    const syncMuted = () => setIsMuted(video.muted)
+    syncMuted()
+    video.addEventListener('volumechange', syncMuted)
     video.addEventListener('timeupdate', syncLiveState)
     return () => {
-      events.forEach((e) => video.removeEventListener(e, syncState))
+      video.removeEventListener('volumechange', syncMuted)
       video.removeEventListener('timeupdate', syncLiveState)
     }
-  }, [playerRef, syncState, syncLiveState])
+  }, [video, syncLiveState])
 
   const togglePlay = () => playerRef.current?.togglePlay()
 
-  const skip = (seconds: number) => {
-    const handle = playerRef.current
-    if (!handle) return
-    const range = handle.getSeekableRange()
-    const current = handle.getCurrentTime()
-    const target = range
-      ? Math.max(range.start, Math.min(current + seconds, range.end))
-      : current + seconds
-    handle.seekTo(target)
-  }
+  const skip = (seconds: number) => playerRef.current?.skip(seconds)
 
   const toggleMute = () => {
-    const video = playerRef.current?.getVideo()
-    if (video) {
-      video.muted = !video.muted
-      setIsMuted(video.muted)
+    const el = playerRef.current?.getVideo()
+    if (el) {
+      el.muted = !el.muted
+      setIsMuted(el.muted)
     }
   }
 
   const toggleFullscreen = () => {
-    const video = playerRef.current?.getVideo()
     if (!video) return
     const container = video.closest('.player-container')
     if (document.fullscreenElement) {
@@ -91,7 +76,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
   return (
     <div className="flex flex-col">
       {/* Timeline / seek bar – HLS streams with DVR window only */}
-      {isHls && <SeekBar playerRef={playerRef} />}
+      {isHls && <SeekBar playerRef={playerRef} video={video} />}
 
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2">
@@ -109,7 +94,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
                   <path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
-                  <text x="12" y="15.5" fontSize="5.5" fontWeight="bold" textAnchor="middle" dominantBaseline="middle" fill="currentColor" aria-hidden="true">10</text>
+                  <text x="12" y="13" fontSize="5.5" fontWeight="bold" textAnchor="middle" dominantBaseline="central" direction="ltr" fill="currentColor" aria-hidden="true">10</text>
                 </svg>
               </button>
 
@@ -138,7 +123,7 @@ export function PlayerControls({ playerRef, isHls, isPiPSupported, onPiPToggle, 
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
                   <path d="M12.01 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/>
-                  <text x="12" y="15.5" fontSize="5.5" fontWeight="bold" textAnchor="middle" dominantBaseline="middle" fill="currentColor" aria-hidden="true">10</text>
+                  <text x="12" y="13" fontSize="5.5" fontWeight="bold" textAnchor="middle" dominantBaseline="central" direction="ltr" fill="currentColor" aria-hidden="true">10</text>
                 </svg>
               </button>
 
