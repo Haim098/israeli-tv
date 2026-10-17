@@ -27,9 +27,12 @@ interface TvState {
   currentChannel: Channel
   isLoading: boolean
   error: string | null
+  /** True while the active media element (video, or the background audio swap) is playing. */
+  isPlaying: boolean
   setChannel: (channel: Channel) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
+  setPlaying: (playing: boolean) => void
   nextChannel: () => void
   prevChannel: () => void
 }
@@ -42,12 +45,14 @@ export const useTvStore = create<TvState>((set, get) => ({
   })(),
   isLoading: false,
   error: null,
+  isPlaying: false,
   setChannel: (channel) => {
     safeSetItem(LAST_CHANNEL_KEY, channel.id)
     set({ currentChannel: channel, isLoading: true, error: null })
   },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error, isLoading: false }),
+  setPlaying: (isPlaying) => set({ isPlaying }),
   nextChannel: () => {
     const { channels, currentChannel } = get()
     const idx = channels.findIndex((c) => c.id === currentChannel.id)

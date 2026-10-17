@@ -14,13 +14,9 @@ const isMobileLike =
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(pointer: coarse)').matches
 
-export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
+export function usePiP(video: HTMLVideoElement | null) {
   const [isPiP, setIsPiP] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
-  // Surfaced in the UI so on-device PiP failures are diagnosable without a
-  // remote console (NotAllowedError vs. InvalidStateError etc. point at very
-  // different root causes). Auto-clears after a few seconds.
-  const [pipError, setPipError] = useState<string | null>(null)
 
   useEffect(() => {
     const video = document.createElement('video') as unknown as WebKitHTMLVideoElement
@@ -31,7 +27,6 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
   }, [])
 
   useEffect(() => {
-    const video = videoRef.current
     if (!video) return
 
     const onEnter = () => setIsPiP(true)
@@ -49,10 +44,9 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
       video.removeEventListener('enterpictureinpicture', onEnter)
       video.removeEventListener('leavepictureinpicture', onLeave)
     }
-  }, [videoRef])
+  }, [video])
 
   const togglePiP = useCallback(async () => {
-    const video = videoRef.current
     if (!video) return
 
     try {
@@ -89,11 +83,8 @@ export function usePiP(videoRef: React.RefObject<HTMLVideoElement | null>) {
       }
     } catch (err) {
       console.warn('PiP failed:', err)
-      const e = err as Partial<Error> | undefined
-      setPipError(`${e?.name ?? 'Error'}: ${e?.message ?? String(err)}`)
-      window.setTimeout(() => setPipError(null), 8000)
     }
-  }, [videoRef])
+  }, [video])
 
-  return { isPiP, isSupported, togglePiP, pipError }
+  return { isPiP, isSupported, togglePiP }
 }

@@ -13,11 +13,20 @@ function mimeForLogo(path: string): string {
   }
 }
 
+/**
+ * Notification / lock-screen / PiP-window media controls.
+ *
+ * Play and pause are wired to explicit actions (not a toggle): a toggle can
+ * invert the user's intent when the system button and the real player state
+ * disagree. `playbackState` is kept in sync by VideoPlayer from the real
+ * play/pause events, so the icon always reflects what is actually happening.
+ */
 export function useMediaSession(
   channel: Channel,
   onNext: () => void,
   onPrev: () => void,
-  onPlayPause: () => void,
+  onPlay: () => void,
+  onPause: () => void,
 ) {
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
@@ -31,18 +40,10 @@ export function useMediaSession(
       ],
     })
 
-    navigator.mediaSession.playbackState = 'playing'
-
     navigator.mediaSession.setActionHandler('nexttrack', onNext)
     navigator.mediaSession.setActionHandler('previoustrack', onPrev)
-    navigator.mediaSession.setActionHandler('play', () => {
-      onPlayPause()
-      navigator.mediaSession.playbackState = 'playing'
-    })
-    navigator.mediaSession.setActionHandler('pause', () => {
-      onPlayPause()
-      navigator.mediaSession.playbackState = 'paused'
-    })
+    navigator.mediaSession.setActionHandler('play', onPlay)
+    navigator.mediaSession.setActionHandler('pause', onPause)
 
     return () => {
       navigator.mediaSession.setActionHandler('nexttrack', null)
@@ -50,5 +51,5 @@ export function useMediaSession(
       navigator.mediaSession.setActionHandler('play', null)
       navigator.mediaSession.setActionHandler('pause', null)
     }
-  }, [channel, onNext, onPrev, onPlayPause])
+  }, [channel, onNext, onPrev, onPlay, onPause])
 }

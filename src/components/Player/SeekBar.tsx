@@ -3,11 +3,12 @@ import type { VideoPlayerHandle } from './VideoPlayer'
 
 interface SeekBarProps {
   playerRef: React.RefObject<VideoPlayerHandle | null>
+  video: HTMLVideoElement | null
 }
 
 const MIN_DVR_SEC = 30
 
-export function SeekBar({ playerRef }: SeekBarProps) {
+export function SeekBar({ playerRef, video }: SeekBarProps) {
   const [seekableStart, setSeekableStart] = useState(0)
   const [seekableEnd, setSeekableEnd] = useState(0)
   const isDraggingRef = useRef(false)
@@ -29,7 +30,6 @@ export function SeekBar({ playerRef }: SeekBarProps) {
   }, [playerRef])
 
   useEffect(() => {
-    const video = playerRef.current?.getVideo()
     if (!video) return
     video.addEventListener('timeupdate', updateState)
     video.addEventListener('progress', updateState)
@@ -37,7 +37,7 @@ export function SeekBar({ playerRef }: SeekBarProps) {
       video.removeEventListener('timeupdate', updateState)
       video.removeEventListener('progress', updateState)
     }
-  }, [playerRef, updateState])
+  }, [video, updateState])
 
   const duration = seekableEnd - seekableStart
 

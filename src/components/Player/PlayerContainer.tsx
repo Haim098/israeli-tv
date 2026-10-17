@@ -11,11 +11,17 @@ import { useWakeLock } from '../../hooks/useWakeLock'
 import type { Channel } from '../../types'
 
 const CONTROLS_TIMEOUT = 5000
+// Max gap between taps for a double-tap (and for chaining further skips).
+const DOUBLE_TAP_MS = 300
+const SKIP_SECONDS = 10
+
+type SkipSide = 'back' | 'fwd'
 
 export function PlayerContainer() {
   const currentChannel = useTvStore((s) => s.currentChannel)
   const isLoading = useTvStore((s) => s.isLoading)
   const error = useTvStore((s) => s.error)
+  const isPlaying = useTvStore((s) => s.isPlaying)
   const nextChannel = useTvStore((s) => s.nextChannel)
   const prevChannel = useTvStore((s) => s.prevChannel)
 
@@ -49,37 +55,80 @@ export function PlayerContainer() {
   }, [currentChannel.id])
 
   const playerRef = useRef<VideoPlayerHandle>(null)
-  const videoElementRef = useRef<HTMLVideoElement>(null)
+  // The <video> element as state: hooks/controls re-bind their listeners when
+  // VideoPlayer remounts (e.g. after an iframe fallback + retry).
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
 
-  // Sync video element ref for PiP
-  const updateVideoRef = useCallback(() => {
-    const video = playerRef.current?.getVideo()
-    if (video) {
-      (videoElementRef as React.MutableRefObject<HTMLVideoElement | null>).current = video
+  const { isPiP, isSupported: isPiPSupported, togglePiP } = usePiP(videoEl)
+
+  const onPlay = useCallback(() => playerRef.current?.play(), [])
+  const onPause = useCallback(() => playerRef.current?.pause(), [])
+
+  const retry = useCallback(() => {
+    setIframeFallback(null)
+    setRetryNonce((n) => n + 1)
+    useTvStore.getState().setError(null)
+    useTvStore.getState().setLoading(true)
+  }, [])
+
+  // Network came back: retry a failed stream, or nudge a stalled one.
+  useEffect(() => {
+    const onOnline = () => {
+      if (useTvStore.getState().error) retry()
+      else playerRef.current?.recover()
     }
-  }, [])
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [retry])
 
-  // Run on every render to keep the PiP video ref in sync.
-  queueMicrotask(updateVideoRef)
+  // Double-tap the left/right side of the video to skip back/forward 10s
+  // (further quick taps keep adding, like YouTube).
+  const lastTapRef = useRef<{ time: number; side: SkipSide | null }>({ time: 0, side: null })
+  const [skipFlash, setSkipFlash] = useState<{ side: SkipSide; seconds: number } | null>(null)
+  const skipFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (skipFlashTimerRef.current) clearTimeout(skipFlashTimerRef.current) }, [])
 
-  const { isPiP, isSupported: isPiPSupported, togglePiP, pipError } = usePiP(videoElementRef)
+  const onTapLayer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse') return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const side: SkipSide | null = x < 0.35 ? 'back' : x > 0.65 ? 'fwd' : null
+    const now = performance.now()
+    const last = lastTapRef.current
+    lastTapRef.current = { time: now, side }
+    if (!side || last.side !== side || now - last.time > DOUBLE_TAP_MS) return
 
-  const onPlayPause = useCallback(() => {
-    playerRef.current?.togglePlay()
-  }, [])
+    playerRef.current?.skip(side === 'fwd' ? SKIP_SECONDS : -SKIP_SECONDS)
+    setSkipFlash((prev) => ({
+      side,
+      seconds: prev && prev.side === side ? prev.seconds + SKIP_SECONDS : SKIP_SECONDS,
+    }))
+    if (skipFlashTimerRef.current) clearTimeout(skipFlashTimerRef.current)
+    skipFlashTimerRef.current = setTimeout(() => setSkipFlash(null), 700)
+  }
 
   const onFallbackToIframe = useCallback((url: string) => {
     setIframeFallback({ channelId: currentChannel.id, url })
     useTvStore.getState().setLoading(true)
   }, [currentChannel.id])
 
-  useMediaSession(currentChannel, nextChannel, prevChannel, onPlayPause)
-  useWakeLock(true)
+  useMediaSession(currentChannel, nextChannel, prevChannel, onPlay, onPause)
 
   // Determine if we should show iframe (either native iframe channel, or HLS fell back to iframe)
   const showIframe = currentChannel.type === 'iframe' ||
     (iframeFallback && iframeFallback.channelId === currentChannel.id)
   const isHls = !showIframe
+
+  // Keep the screen on only while something is actually playing (an iframe
+  // channel's state is unknown, so keep it on there).
+  useWakeLock(showIframe || isPlaying)
+
+  // Keep the controls up while paused; once playback resumes, restart the
+  // auto-hide timer.
+  const controlsVisible = showControls || (isHls && !isPlaying)
+  useEffect(() => useTvStore.subscribe((state, prev) => {
+    if (state.isPlaying && !prev.isPlaying) resetControlsTimer()
+  }), [resetControlsTimer])
 
   // Build the channel object for iframe fallback
   const iframeChannel: Channel | null = showIframe
@@ -101,15 +150,36 @@ export function PlayerContainer() {
           channel={currentChannel}
           retryNonce={retryNonce}
           onFallbackToIframe={onFallbackToIframe}
+          onVideoElement={setVideoEl}
         />
       ) : (
         <IframePlayer channel={iframeChannel!} />
       )}
 
+      {/* Double-tap-to-skip layer (touch only), under the overlays/controls */}
+      {isHls && (
+        <div
+          className="absolute inset-0 touch-manipulation"
+          onPointerUp={onTapLayer}
+          aria-hidden="true"
+        />
+      )}
+
+      {skipFlash && (
+        <div
+          className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full bg-black/55 px-4 py-2 text-sm font-semibold text-white ${
+            skipFlash.side === 'fwd' ? 'right-6' : 'left-6'
+          }`}
+          dir="rtl"
+        >
+          {skipFlash.side === 'fwd' ? `${skipFlash.seconds} שניות קדימה ⏩` : `⏪ ${skipFlash.seconds} שניות אחורה`}
+        </div>
+      )}
+
       {/* Now-playing channel label — fades with the controls */}
       <div
         className={`pointer-events-none absolute top-0 inset-x-0 bg-gradient-to-b from-black/70 to-transparent p-3 transition-opacity duration-300 ${
-          showControls && !error ? 'opacity-100' : 'opacity-0'
+          controlsVisible && !error ? 'opacity-100' : 'opacity-0'
         }`}
       >
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-white drop-shadow">
@@ -134,12 +204,7 @@ export function PlayerContainer() {
           <p className="text-base font-semibold text-white">{error}</p>
           <p className="text-sm text-white/60">נסה שוב או בחר ערוץ אחר</p>
           <button
-            onClick={() => {
-              setIframeFallback(null)
-              setRetryNonce((n) => n + 1)
-              useTvStore.getState().setError(null)
-              useTvStore.getState().setLoading(true)
-            }}
+            onClick={retry}
             className="mt-1 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 active:scale-95"
           >
             נסה שוב
@@ -147,25 +212,15 @@ export function PlayerContainer() {
         </div>
       )}
 
-      {/* PiP failure toast — diagnostic aid for on-device debugging where no
-          console is reachable. Auto-clears via usePiP. */}
-      {pipError && (
-        <div
-          dir="ltr"
-          className="absolute inset-x-3 top-12 z-30 rounded-lg bg-black/85 px-3 py-2 text-center text-xs font-medium text-amber-300"
-        >
-          PiP error: {pipError}
-        </div>
-      )}
-
       {/* Controls overlay */}
       <div
         className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-8 transition-opacity duration-300 ${
-          showControls ? 'opacity-100' : 'pointer-events-none opacity-0'
+          controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
       >
         <PlayerControls
           playerRef={playerRef}
+          video={videoEl}
           isHls={isHls}
           isPiPSupported={isPiPSupported && isHls}
           onPiPToggle={togglePiP}
