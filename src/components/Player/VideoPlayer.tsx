@@ -183,6 +183,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           backBufferLength: 60,
           liveDurationInfinity: true,
           liveSyncDurationCount: 2,
+          // Fetch the first fragment while MediaSource is still being attached
+          // instead of waiting for it — shaves time off every channel start.
+          startFragPrefetch: true,
         })
         hlsRef.current = hls
 
