@@ -47,6 +47,9 @@ export const useTvStore = create<TvState>((set, get) => ({
   error: null,
   isPlaying: false,
   setChannel: (channel) => {
+    // Re-selecting the playing channel must not raise the loading spinner:
+    // the player doesn't reload for the same channel, so nothing would clear it.
+    if (channel.id === get().currentChannel.id) return
     safeSetItem(LAST_CHANNEL_KEY, channel.id)
     set({ currentChannel: channel, isLoading: true, error: null })
   },

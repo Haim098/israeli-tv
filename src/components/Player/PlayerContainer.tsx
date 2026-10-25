@@ -29,8 +29,12 @@ export function PlayerContainer() {
   const [iframeFallback, setIframeFallback] = useState<{ channelId: string; url: string } | null>(null)
   // Incremented by the retry button to force VideoPlayer to re-run its resolve
   // effect (with `force=true`, bypassing the resolver cache). `setChannel` with
-  // the same channel object wouldn't trigger the effect on its own.
-  const [retryNonce, setRetryNonce] = useState(0)
+  // the same channel object wouldn't trigger the effect on its own. Keyed by
+  // channel so it reads as 0 the moment the channel changes — resetting it in
+  // an effect instead made the first switch after a retry load the new
+  // channel twice (and bypass its resolver cache).
+  const [retryState, setRetryState] = useState({ channelId: currentChannel.id, nonce: 0 })
+  const retryNonce = retryState.channelId === currentChannel.id ? retryState.nonce : 0
 
   // Auto-hide controls
   const [showControls, setShowControls] = useState(true)
@@ -48,10 +52,9 @@ export function PlayerContainer() {
     return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }
   }, [resetControlsTimer])
 
-  // Clear iframe fallback and retry counter when channel changes
+  // Clear iframe fallback when channel changes
   useEffect(() => {
     setIframeFallback(null)
-    setRetryNonce(0)
   }, [currentChannel.id])
 
   const playerRef = useRef<VideoPlayerHandle>(null)
@@ -66,7 +69,11 @@ export function PlayerContainer() {
 
   const retry = useCallback(() => {
     setIframeFallback(null)
-    setRetryNonce((n) => n + 1)
+    const channelId = useTvStore.getState().currentChannel.id
+    setRetryState((prev) => ({
+      channelId,
+      nonce: (prev.channelId === channelId ? prev.nonce : 0) + 1,
+    }))
     useTvStore.getState().setError(null)
     useTvStore.getState().setLoading(true)
   }, [])
