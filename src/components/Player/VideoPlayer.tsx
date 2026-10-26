@@ -35,6 +35,17 @@ function isWindowInSystemPiP(): boolean {
   return (window.innerWidth * window.innerHeight) / screenArea < 0.35
 }
 
+// hls.js starts every new instance assuming 500 kbps, so each channel switch
+// began on a low rendition and switched up a few seconds later (a visible
+// quality jump, and a level switch is where audio can drop out briefly).
+// Carry the measured bandwidth over to the next channel instead.
+let lastBandwidthEstimate: number | undefined
+
+function rememberBandwidth(hls: Hls): void {
+  const bwe = hls.bandwidthEstimate
+  if (Number.isFinite(bwe) && bwe > 0) lastBandwidthEstimate = bwe
+}
+
 interface VideoPlayerProps {
   channel: Channel
   /** Bumped by the retry button to force a fresh resolve (cache-bypassing). */
@@ -73,8 +84,12 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // PiP buttons, tap-to-play) and by play/pause events while the page is
     // visible; ignored while hidden, where the browser itself pauses/detaches.
     const wantsPlayRef = useRef(true)
-    // Listeners of the current native-HLS (iOS) load, dropped on the next load.
-    const nativeLoadAbortRef = useRef<AbortController | null>(null)
+    // Listeners tied to the current load, dropped on the next load.
+    const loadAbortRef = useRef<AbortController | null>(null)
+    // Bumped every time the load effect runs (channel switch or retry), so an
+    // async recovery started for an earlier load can tell it is stale — even
+    // when the user has since come back to the same channel.
+    const loadGenRef = useRef(0)
     // Always points at the active channel, so the async error handler (which
     // outlives the render that created it) reads the current channel rather
     // than a stale closure.
@@ -163,16 +178,32 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       if (!video) return
 
       setShowTapToPlay(false)
-      nativeLoadAbortRef.current?.abort()
-      nativeLoadAbortRef.current = null
+      loadAbortRef.current?.abort()
+      loadAbortRef.current = null
 
       // Cleanup previous instance
       if (hlsRef.current) {
+        rememberBandwidth(hlsRef.current)
         hlsRef.current.destroy()
         hlsRef.current = null
       }
 
       if (Hls.isSupported()) {
+        // While backgrounded we play through the hidden <audio> element (the
+        // browser pauses a hidden <video>). A switch made from the notification
+        // / lock screen must load into that element too, or the new channel is
+        // silent until the app is reopened.
+        const target: HTMLMediaElement =
+          isSwappedRef.current && audioRef.current ? audioRef.current : video
+        const loadAbort = new AbortController()
+        loadAbortRef.current = loadAbort
+        // Keep the spinner until the picture actually moves, not just until
+        // the playlist is parsed (which left a black frame with no spinner).
+        target.addEventListener('playing', () => setLoading(false), {
+          once: true,
+          signal: loadAbort.signal,
+        })
+
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
@@ -186,21 +217,26 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           // Fetch the first fragment while MediaSource is still being attached
           // instead of waiting for it — shaves time off every channel start.
           startFragPrefetch: true,
+          ...(lastBandwidthEstimate ? { abrEwmaDefaultEstimate: lastBandwidthEstimate } : {}),
         })
         hlsRef.current = hls
 
         hls.loadSource(url)
-        hls.attachMedia(video)
+        hls.attachMedia(target)
+
+        hls.on(Hls.Events.FRAG_LOADED, () => rememberBandwidth(hls))
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           // Healthy load — reset the re-resolve budget so a later token expiry
           // gets a fresh set of recovery attempts.
           resolveAttemptsRef.current = 0
-          setLoading(false)
           setShowTapToPlay(false)
-          video.play().then(() => setShowTapToPlay(false)).catch((err) => {
+          target.play().then(() => setShowTapToPlay(false)).catch((err) => {
             // Autoplay blocked (no user gesture) — surface a tap-to-play button.
-            if (err?.name === 'NotAllowedError') setShowTapToPlay(true)
+            if (err?.name === 'NotAllowedError') {
+              setLoading(false)
+              if (target === video) setShowTapToPlay(true)
+            }
           })
         })
 
@@ -224,17 +260,18 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   }
                   resolveAttemptsRef.current += 1
                   const attempt = resolveAttemptsRef.current
-                  const channelId = ch.id
+                  const gen = loadGenRef.current
                   warn(`Network error on dynamic stream, re-resolving URL (attempt ${attempt})...`)
                   hls.destroy()
                   // force=true bypasses the resolver cache so we don't reload the
                   // same rejected token.
                   ch.resolveUrl(true).then((freshUrl) => {
-                    // Channel changed while resolving — abandon this load.
-                    if (channelRef.current.id !== channelId) return
+                    // Channel changed (or was reloaded) while resolving —
+                    // abandon this load.
+                    if (loadGenRef.current !== gen) return
                     loadStream(freshUrl)
                   }).catch(() => {
-                    if (channelRef.current.id !== channelId) return
+                    if (loadGenRef.current !== gen) return
                     if (ch.fallbackUrl) {
                       onFallbackToIframe?.(ch.fallbackUrl)
                     } else {
@@ -272,7 +309,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         // a channel switch drops them instead of letting a stale error handler
         // fire (with the old URL) on the next channel.
         const loadAbort = new AbortController()
-        nativeLoadAbortRef.current = loadAbort
+        loadAbortRef.current = loadAbort
         video.src = url
         video.addEventListener('loadedmetadata', () => {
           setLoading(false)
@@ -303,6 +340,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       // newly selected channel.
       channelRef.current = channel
       resolveAttemptsRef.current = 0
+      loadGenRef.current += 1
       // A freshly selected channel should start playing.
       wantsPlayRef.current = true
       setLoading(true)
@@ -335,8 +373,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       return () => {
         cancelled = true
-        nativeLoadAbortRef.current?.abort()
-        nativeLoadAbortRef.current = null
+        loadAbortRef.current?.abort()
+        loadAbortRef.current = null
         if (hlsRef.current) {
           hlsRef.current.destroy()
           hlsRef.current = null
@@ -453,6 +491,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             hls.attachMedia(video)
             isSwappedRef.current = false
             video.addEventListener('canplay', () => {
+              // A channel switched to while backgrounded may never have
+              // started on the <audio> element, so clear its spinner here.
+              useTvStore.getState().setLoading(false)
               if (!shouldPlay) return
               const pos = hls.liveSyncPosition
               if (pos != null) video.currentTime = pos

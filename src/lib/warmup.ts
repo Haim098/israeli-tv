@@ -11,7 +11,10 @@
 
 import type { Channel } from '../types'
 
-const preconnected = new Set<string>()
+// Browsers drop an unused preconnected socket after ~10s, so a channel pressed
+// again later needs a fresh hint rather than a "seen it already" skip.
+const PRECONNECT_TTL_MS = 10_000
+const preconnected = new Map<string, { link: HTMLLinkElement; at: number }>()
 
 function preconnect(url: string): void {
   let origin: string
@@ -20,8 +23,10 @@ function preconnect(url: string): void {
   } catch {
     return
   }
-  if (preconnected.has(origin)) return
-  preconnected.add(origin)
+  const now = Date.now()
+  const prev = preconnected.get(origin)
+  if (prev && now - prev.at < PRECONNECT_TTL_MS) return
+  prev?.link.remove()
   const link = document.createElement('link')
   link.rel = 'preconnect'
   link.href = origin
@@ -29,6 +34,7 @@ function preconnect(url: string): void {
   // connection must be the anonymous-CORS one or the browser won't reuse it.
   link.crossOrigin = 'anonymous'
   document.head.appendChild(link)
+  preconnected.set(origin, { link, at: now })
 }
 
 export function warmChannel(channel: Channel): void {

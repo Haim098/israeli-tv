@@ -32,8 +32,14 @@ export function PlayerContainer() {
   // the same channel object wouldn't trigger the effect on its own. Keyed by
   // channel so it reads as 0 the moment the channel changes — resetting it in
   // an effect instead made the first switch after a retry load the new
-  // channel twice (and bypass its resolver cache).
+  // channel twice (and bypass its resolver cache). It is also dropped (during
+  // render, before anything commits) as soon as the channel changes, so coming
+  // back to a channel you once retried loads it normally instead of forcing a
+  // fresh token again.
   const [retryState, setRetryState] = useState({ channelId: currentChannel.id, nonce: 0 })
+  if (retryState.channelId !== currentChannel.id) {
+    setRetryState({ channelId: currentChannel.id, nonce: 0 })
+  }
   const retryNonce = retryState.channelId === currentChannel.id ? retryState.nonce : 0
 
   // Auto-hide controls
