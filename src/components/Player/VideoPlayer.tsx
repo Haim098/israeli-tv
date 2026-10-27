@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHand
 import Hls from 'hls.js'
 import type { Channel } from '../../types'
 import { useTvStore } from '../../stores/tvStore'
+import { keepAudioOutputAwake, releaseAudioOutput, setWatching } from '../../lib/audioKeepAlive'
 
 const isDev = import.meta.env.DEV
 const warn = (...args: unknown[]) => { if (isDev) console.warn(...args) }
@@ -45,6 +46,12 @@ function rememberBandwidth(hls: Hls): void {
   const bwe = hls.bandwidthEstimate
   if (Number.isFinite(bwe) && bwe > 0) lastBandwidthEstimate = bwe
 }
+
+// How long to hold the audio output awake while a channel loads or a stream
+// is stalled, and for how long after playback resumes (so the hand-over to
+// the stream's own audio has no gap). See lib/audioKeepAlive.
+const AUDIO_HOLD_LOADING_MS = 20_000
+const AUDIO_HOLD_AFTER_PLAYING_MS = 3_000
 
 interface VideoPlayerProps {
   channel: Channel
@@ -217,6 +224,12 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           // Fetch the first fragment while MediaSource is still being attached
           // instead of waiting for it — shaves time off every channel start.
           startFragPrefetch: true,
+          // Start at the beginning of the first loaded segment, not part-way
+          // into it. Starting mid-segment left as little as ~2s buffered
+          // ahead, so playback often froze (and went silent) a moment after
+          // it began, and the decoder first had to churn through the
+          // segment's leading frames just to reach the start point.
+          startOnSegmentBoundary: true,
           ...(lastBandwidthEstimate ? { abrEwmaDefaultEstimate: lastBandwidthEstimate } : {}),
         })
         hlsRef.current = hls
@@ -344,6 +357,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       // A freshly selected channel should start playing.
       wantsPlayRef.current = true
       setLoading(true)
+      // The old channel's audio stops now; keep the output device awake
+      // until the new one starts.
+      keepAudioOutputAwake(AUDIO_HOLD_LOADING_MS)
 
       if (channel.resolveUrl) {
         // On retry, bypass any cached/stale URL the resolver may be holding.
@@ -396,13 +412,25 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           else if (e.type === 'pause' && video?.currentSrc) wantsPlayRef.current = false
         }
         const el = isSwappedRef.current ? audio : video
+        if (e.target === el) {
+          // Bridge the silent gaps (stall, waiting for data) so the audio
+          // output doesn't go idle and clip the sound when it resumes.
+          if (e.type === 'waiting' && wantsPlayRef.current) keepAudioOutputAwake(AUDIO_HOLD_LOADING_MS)
+          else if (e.type === 'playing') {
+            keepAudioOutputAwake(AUDIO_HOLD_AFTER_PLAYING_MS)
+            setWatching(document.visibilityState === 'visible')
+          } else if (e.type === 'pause' && !wantsPlayRef.current) {
+            releaseAudioOutput()
+            setWatching(false)
+          }
+        }
         const playing = !!el && !el.paused
         setPlaying(playing)
         if ('mediaSession' in navigator) {
           navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
         }
       }
-      const events = ['play', 'pause', 'playing', 'emptied'] as const
+      const events = ['play', 'pause', 'playing', 'emptied', 'waiting'] as const
       for (const el of [video, audio]) events.forEach((ev) => el?.addEventListener(ev, sync))
       return () => {
         for (const el of [video, audio]) events.forEach((ev) => el?.removeEventListener(ev, sync))
@@ -452,6 +480,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const video = videoRef.current
         const audio = audioRef.current
         const hls = hlsRef.current
+
+        // The keep-alive clip only matters while the app is on screen.
+        setWatching(document.visibilityState === 'visible' && wantsPlayRef.current)
 
         if (document.visibilityState === 'hidden' && video && backgroundPlaybackEnabled) {
           // Paused by the user — leaving the app must not start anything.

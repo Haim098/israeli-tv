@@ -4,6 +4,8 @@ import type { VideoPlayerHandle } from './VideoPlayer'
 import { IframePlayer } from './IframePlayer'
 import { PlayerControls } from './PlayerControls'
 import { Spinner } from '../ui/Spinner'
+import { AVDebug } from './AVDebug'
+import { isAVDebugEnabled } from '../../lib/avDebug'
 import { useTvStore } from '../../stores/tvStore'
 import { usePiP } from '../../hooks/usePiP'
 import { useMediaSession } from '../../hooks/useMediaSession'
@@ -64,6 +66,7 @@ export function PlayerContainer() {
   }, [currentChannel.id])
 
   const playerRef = useRef<VideoPlayerHandle>(null)
+  const [avDebug] = useState(isAVDebugEnabled)
   // The <video> element as state: hooks/controls re-bind their listeners when
   // VideoPlayer remounts (e.g. after an iframe fallback + retry).
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
@@ -227,6 +230,8 @@ export function PlayerContainer() {
           {currentChannel.name}
         </span>
       </div>
+
+      {avDebug && isHls && <AVDebug video={videoEl} />}
 
       {/* Loading overlay */}
       {isLoading && !error && (
