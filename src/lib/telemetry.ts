@@ -15,7 +15,7 @@
 // Empty = reporting disabled.
 const TELEMETRY_URL: string =
   (import.meta.env.VITE_TELEMETRY_URL as string | undefined) ??
-  ''
+  'https://israeli-tv-proxy.haimtv.workers.dev/api/log'
 
 export type TelemetryKind =
   | 'error' // a fatal stream error (we will reconnect)
