@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHand
 import Hls from 'hls.js'
 import type { Channel } from '../../types'
 import { useTvStore } from '../../stores/tvStore'
-import { keepAudioOutputAwake, releaseAudioOutput } from '../../lib/audioKeepAlive'
+import { keepAudioOutputAwake, releaseAudioOutput, setWatching } from '../../lib/audioKeepAlive'
 
 const isDev = import.meta.env.DEV
 const warn = (...args: unknown[]) => { if (isDev) console.warn(...args) }
@@ -416,8 +416,13 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           // Bridge the silent gaps (stall, waiting for data) so the audio
           // output doesn't go idle and clip the sound when it resumes.
           if (e.type === 'waiting' && wantsPlayRef.current) keepAudioOutputAwake(AUDIO_HOLD_LOADING_MS)
-          else if (e.type === 'playing') keepAudioOutputAwake(AUDIO_HOLD_AFTER_PLAYING_MS)
-          else if (e.type === 'pause' && !wantsPlayRef.current) releaseAudioOutput()
+          else if (e.type === 'playing') {
+            keepAudioOutputAwake(AUDIO_HOLD_AFTER_PLAYING_MS)
+            setWatching(document.visibilityState === 'visible')
+          } else if (e.type === 'pause' && !wantsPlayRef.current) {
+            releaseAudioOutput()
+            setWatching(false)
+          }
         }
         const playing = !!el && !el.paused
         setPlaying(playing)
@@ -475,6 +480,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const video = videoRef.current
         const audio = audioRef.current
         const hls = hlsRef.current
+
+        // The keep-alive clip only matters while the app is on screen.
+        setWatching(document.visibilityState === 'visible' && wantsPlayRef.current)
 
         if (document.visibilityState === 'hidden' && video && backgroundPlaybackEnabled) {
           // Paused by the user — leaving the app must not start anything.
