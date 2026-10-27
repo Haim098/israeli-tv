@@ -1,0 +1,52 @@
+# Deploys the Cloudflare Worker in worker/ (israeli-tv-proxy).
+#
+# Runs on every push to master that touches worker/, and on demand
+# (Actions → Deploy worker → Run workflow).
+#
+# Needs one repository secret, CLOUDFLARE_API_TOKEN: a Cloudflare API token
+# made from the "Edit Cloudflare Workers" template. CLOUDFLARE_ACCOUNT_ID is
+# optional (only needed if the token covers more than one account).
+# Without the token the job skips instead of failing.
+name: Deploy worker
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - name: Skip (no CLOUDFLARE_API_TOKEN secret yet)
+        if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::CLOUDFLARE_API_TOKEN is not set, skipping the worker deploy."
+
+      - uses: actions/checkout@v4
+        if: env.HAS_TOKEN == 'true'
+
+      - name: Deploy with wrangler
+        id: deploy
+        if: env.HAS_TOKEN == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
+
+      - name: Worker address
+        if: env.HAS_TOKEN == 'true'
+        run: |
+          echo "Worker URL: ${{ steps.deploy.outputs.deployment-url }}"
+          echo "### Worker URL: ${{ steps.deploy.outputs.deployment-url }}" >> "$GITHUB_STEP_SUMMARY"
