@@ -8,7 +8,7 @@
 // `"token"` value in the snippet). It is public by design. Empty = off.
 const CF_BEACON_TOKEN: string =
   (import.meta.env.VITE_CF_BEACON_TOKEN as string | undefined) ??
-  ''
+  'ed4db90cd3fb4f35bdd381612a0da722'
 
 export function startAnalytics(): void {
   if (!CF_BEACON_TOKEN || import.meta.env.DEV) return
