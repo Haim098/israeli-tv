@@ -1,6 +1,8 @@
 name = "israeli-tv-proxy"
 main = "index.js"
 compatibility_date = "2024-01-01"
+# Keep any variables set in the dashboard when deploying from CI.
+keep_vars = true
 
 [placement]
 mode = "smart"
