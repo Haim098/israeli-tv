@@ -47,6 +47,41 @@ function rememberBandwidth(hls: Hls): void {
   if (Number.isFinite(bwe) && bwe > 0) lastBandwidthEstimate = bwe
 }
 
+// Calls `done` once the video's media clock is actually advancing (a later
+// frame has been presented), which is also when its sound starts. Falls back
+// to a timer where requestVideoFrameCallback is missing or frames stall.
+const PICTURE_MOVING_FALLBACK_MS = 1_500
+
+function onPictureMoving(video: HTMLVideoElement, done: () => void, signal: AbortSignal): void {
+  let finished = false
+  let handle = 0
+  const finish = () => {
+    if (finished) return
+    finished = true
+    clearTimeout(timer)
+    if (handle) video.cancelVideoFrameCallback(handle)
+    if (!signal.aborted) done()
+  }
+  const timer = setTimeout(finish, PICTURE_MOVING_FALLBACK_MS)
+  signal.addEventListener('abort', () => {
+    finished = true
+    clearTimeout(timer)
+    if (handle) video.cancelVideoFrameCallback(handle)
+  }, { once: true })
+  if (!('requestVideoFrameCallback' in video)) {
+    finish()
+    return
+  }
+  let firstMediaTime: number | null = null
+  const onFrame: VideoFrameRequestCallback = (_now, meta) => {
+    if (finished) return
+    if (firstMediaTime == null) firstMediaTime = meta.mediaTime
+    else if (meta.mediaTime > firstMediaTime + 0.02) return finish()
+    handle = video.requestVideoFrameCallback(onFrame)
+  }
+  handle = video.requestVideoFrameCallback(onFrame)
+}
+
 // How long to hold the audio output awake while a channel loads or a stream
 // is stalled, and for how long after playback resumes (so the hand-over to
 // the stream's own audio has no gap). See lib/audioKeepAlive.
@@ -204,12 +239,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           isSwappedRef.current && audioRef.current ? audioRef.current : video
         const loadAbort = new AbortController()
         loadAbortRef.current = loadAbort
-        // Keep the spinner until the picture actually moves, not just until
-        // the playlist is parsed (which left a black frame with no spinner).
-        target.addEventListener('playing', () => setLoading(false), {
-          once: true,
-          signal: loadAbort.signal,
-        })
+        // Keep the spinner until the picture actually moves. On phones the
+        // first frame sits frozen for ~0.5s after `playing`, and the sound
+        // only starts once it moves — so hiding the spinner on `playing`
+        // showed a still picture with no sound, which read as late audio.
+        target.addEventListener('playing', () => {
+          if (target === video) onPictureMoving(video, () => setLoading(false), loadAbort.signal)
+          else setLoading(false)
+        }, { once: true, signal: loadAbort.signal })
 
         const hls = new Hls({
           enableWorker: true,
@@ -360,6 +397,10 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       // The old channel's audio stops now; keep the output device awake
       // until the new one starts.
       keepAudioOutputAwake(AUDIO_HOLD_LOADING_MS)
+      // Warm the audio path before this channel's sound starts. On the first
+      // channel after the app opens it is still cold, and without this the
+      // picture ran ahead, then froze while the sound caught up.
+      setWatching(document.visibilityState === 'visible')
 
       if (channel.resolveUrl) {
         // On retry, bypass any cached/stale URL the resolver may be holding.

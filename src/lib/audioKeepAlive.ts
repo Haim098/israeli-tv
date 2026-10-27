@@ -53,10 +53,19 @@ export function setKeepAliveMode(next: KeepAliveMode): void {
 const usesWebAudio = () => isAndroid && (mode === 'webaudio' || mode === 'both')
 const usesElement = () => isAndroid && (mode === 'element' || mode === 'both')
 
-function hasUserActivation(): boolean {
-  const activation = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } })
-    .userActivation
-  return !activation || activation.hasBeenActive
+// Before the first user gesture the browser may refuse to start audio (it
+// allows it straight away for an installed app the user watches often). In
+// that case retry on the first tap anywhere.
+let gestureRetryArmed = false
+function retryOnFirstGesture(): void {
+  if (gestureRetryArmed || typeof document === 'undefined') return
+  gestureRetryArmed = true
+  const retry = () => {
+    gestureRetryArmed = false
+    if (warmWanted) playWarmElement()
+    if (holdingOutput && ctx?.state !== 'running') ctx?.resume().catch(() => {})
+  }
+  document.addEventListener('pointerdown', retry, { once: true, capture: true })
 }
 
 // --- 'webaudio' strategy ---------------------------------------------------
@@ -67,12 +76,11 @@ const LEVEL = 1e-6
 
 let ctx: AudioContext | null = null
 let releaseTimer: ReturnType<typeof setTimeout> | undefined
+let holdingOutput = false
 
 function getContext(): AudioContext | null {
   if (ctx) return ctx
-  // Without a user gesture yet, Chrome refuses to start an AudioContext (and
-  // logs a warning). The first channel tap provides one.
-  if (!hasUserActivation() || !('AudioContext' in window)) return null
+  if (!('AudioContext' in window)) return null
   try {
     ctx = new AudioContext({ latencyHint: 'playback' })
     const source = ctx.createConstantSource()
@@ -93,15 +101,18 @@ export function keepAudioOutputAwake(ms: number): void {
   if (!usesWebAudio()) return
   const c = getContext()
   if (!c) return
-  if (c.state !== 'running') c.resume().catch(() => {})
+  holdingOutput = true
+  if (c.state !== 'running') c.resume().catch(() => retryOnFirstGesture())
   clearTimeout(releaseTimer)
   releaseTimer = setTimeout(() => {
+    holdingOutput = false
     c.suspend().catch(() => {})
   }, ms)
 }
 
 /** Let the audio output go idle now (e.g. the user paused). */
 export function releaseAudioOutput(): void {
+  holdingOutput = false
   clearTimeout(releaseTimer)
   ctx?.suspend().catch(() => {})
 }
@@ -145,9 +156,9 @@ function getWarmElement(): HTMLAudioElement | null {
 }
 
 function playWarmElement(): void {
-  if (!usesElement() || !hasUserActivation()) return
+  if (!usesElement()) return
   const el = getWarmElement()
-  if (el?.paused) el.play().catch(() => {})
+  if (el?.paused) el.play().catch(() => retryOnFirstGesture())
 }
 
 function pauseWarmElement(): void {
@@ -156,8 +167,9 @@ function pauseWarmElement(): void {
 
 /**
  * Tell the 'element' strategy whether the user is currently watching. It has
- * to be running *before* a switch tears the old pipeline down, so it follows
- * the whole viewing session rather than just the loading gaps.
+ * to be running *before* a channel's own audio starts — including the very
+ * first channel after the app opens, when the phone's audio output is still
+ * cold — so it follows the whole viewing session, not just the loading gaps.
  */
 export function setWatching(watching: boolean): void {
   warmWanted = watching
