@@ -3,6 +3,7 @@ import Hls from 'hls.js'
 import type { Channel } from '../../types'
 import { useTvStore } from '../../stores/tvStore'
 import { keepAudioOutputAwake, releaseAudioOutput, setWatching } from '../../lib/audioKeepAlive'
+import { report, hostOf } from '../../lib/telemetry'
 
 const isDev = import.meta.env.DEV
 const warn = (...args: unknown[]) => { if (isDev) console.warn(...args) }
@@ -82,6 +83,22 @@ function onPictureMoving(video: HTMLVideoElement, done: () => void, signal: Abor
   handle = video.requestVideoFrameCallback(onFrame)
 }
 
+// After a fatal network error (the channel's server failing or overloaded),
+// wait this long before each new attempt. Only once they are all used up do
+// we give up and show the channel's website or an error. Busy-event overloads
+// are often brief, so this rides them out instead of bailing in seconds.
+const RECONNECT_DELAYS_MS = [1_500, 3_000, 6_000, 10_000, 15_000]
+// Playback must stay healthy this long before the retry budget refills.
+const HEALTHY_PLAYBACK_MS = 20_000
+// A freeze waiting for data longer than this is reported.
+const STALL_REPORT_MS = 4_000
+
+function userMessageOf(err: unknown): string | undefined {
+  return err && typeof err === 'object' && 'userMessage' in err
+    ? (err as { userMessage?: string }).userMessage
+    : undefined
+}
+
 // How long to hold the audio output awake while a channel loads or a stream
 // is stalled, and for how long after playback resumes (so the hand-over to
 // the stream's own audio has no gap). See lib/audioKeepAlive.
@@ -136,17 +153,23 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // outlives the render that created it) reads the current channel rather
     // than a stale closure.
     const channelRef = useRef(channel)
-    // Bounds the network-error re-resolve loop so a permanently-failing token
-    // can't hammer the resolver/CDN forever.
-    const resolveAttemptsRef = useRef(0)
+    // Reconnect state for the current channel: attempts used, the pending
+    // retry, when the trouble began, and the timer that refills the budget
+    // after a stretch of healthy playback.
+    const reconnectAttemptRef = useRef(0)
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+    const healthyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+    const troubleSinceRef = useRef<number | null>(null)
+    // Set by loadStream; lets the error handler (created inside it) schedule
+    // a reconnect without a circular hook dependency.
+    const scheduleReconnectRef = useRef<(info: { detail?: string; status?: number; host?: string }) => void>(() => {})
     const setLoading = useTvStore((s) => s.setLoading)
     const setError = useTvStore((s) => s.setError)
     const setPlaying = useTvStore((s) => s.setPlaying)
+    const setReconnecting = useTvStore((s) => s.setReconnecting)
     // Autoplay with sound is blocked without a user gesture (e.g. cold PWA
     // launch) — show a tap-to-play affordance instead of a silent dead frame.
     const [showTapToPlay, setShowTapToPlay] = useState(false)
-
-    const MAX_RESOLVE_ATTEMPTS = 3
 
     const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
       videoRef.current = el
@@ -215,6 +238,26 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       },
     }), [play, pause])
 
+    // The stream is playing. If we got here by reconnecting, say so (and how
+    // long it took); refill the retry budget once playback has stayed up.
+    const onStreamHealthy = useCallback(() => {
+      const ch = channelRef.current
+      if (reconnectAttemptRef.current > 0) {
+        report({
+          kind: 'recovered',
+          channel: ch.id,
+          attempt: reconnectAttemptRef.current,
+          ms: troubleSinceRef.current ? Date.now() - troubleSinceRef.current : undefined,
+        })
+        setReconnecting(false)
+      }
+      clearTimeout(healthyTimerRef.current)
+      healthyTimerRef.current = setTimeout(() => {
+        reconnectAttemptRef.current = 0
+        troubleSinceRef.current = null
+      }, HEALTHY_PLAYBACK_MS)
+    }, [setReconnecting])
+
     const loadStream = useCallback((url: string) => {
       const video = videoRef.current
       if (!video) return
@@ -246,6 +289,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         target.addEventListener('playing', () => {
           if (target === video) onPictureMoving(video, () => setLoading(false), loadAbort.signal)
           else setLoading(false)
+          onStreamHealthy()
         }, { once: true, signal: loadAbort.signal })
 
         const hls = new Hls({
@@ -277,9 +321,6 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         hls.on(Hls.Events.FRAG_LOADED, () => rememberBandwidth(hls))
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          // Healthy load — reset the re-resolve budget so a later token expiry
-          // gets a fresh set of recovery attempts.
-          resolveAttemptsRef.current = 0
           setShowTapToPlay(false)
           target.play().then(() => setShowTapToPlay(false)).catch((err) => {
             // Autoplay blocked (no user gesture) — surface a tap-to-play button.
@@ -292,57 +333,17 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
-            const ch = channelRef.current
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                // For dynamic-URL channels, re-resolve (token may have expired)
-                if (ch.resolveUrl) {
-                  // Bail out of the loop once we've exhausted our attempts.
-                  if (resolveAttemptsRef.current >= MAX_RESOLVE_ATTEMPTS) {
-                    warn('Re-resolve attempts exhausted, giving up')
-                    hls.destroy()
-                    if (ch.fallbackUrl) {
-                      onFallbackToIframe?.(ch.fallbackUrl)
-                    } else {
-                      setError('שגיאה בטעינת השידור')
-                    }
-                    return
-                  }
-                  resolveAttemptsRef.current += 1
-                  const attempt = resolveAttemptsRef.current
-                  const gen = loadGenRef.current
-                  warn(`Network error on dynamic stream, re-resolving URL (attempt ${attempt})...`)
-                  hls.destroy()
-                  // force=true bypasses the resolver cache so we don't reload the
-                  // same rejected token.
-                  ch.resolveUrl(true).then((freshUrl) => {
-                    // Channel changed (or was reloaded) while resolving —
-                    // abandon this load.
-                    if (loadGenRef.current !== gen) return
-                    loadStream(freshUrl)
-                  }).catch(() => {
-                    if (loadGenRef.current !== gen) return
-                    if (ch.fallbackUrl) {
-                      onFallbackToIframe?.(ch.fallbackUrl)
-                    } else {
-                      setError('שגיאה בטעינת השידור')
-                    }
-                  })
-                  return
-                }
-                // Try fallback URL
-                if (ch.fallbackUrl && url !== ch.fallbackUrl) {
-                  warn('Primary URL failed, trying fallback...')
-                  if (!ch.fallbackUrl.endsWith('.m3u8')) {
-                    // Fallback is an iframe URL
-                    hls.destroy()
-                    onFallbackToIframe?.(ch.fallbackUrl)
-                    return
-                  }
-                  loadStream(ch.fallbackUrl)
-                  return
-                }
-                hls.startLoad()
+                // hls.js already retried this request and gave up. Start over
+                // after a pause (re-resolving a fresh token where the channel
+                // needs one).
+                warn('Fatal network error, reconnecting:', data.details)
+                scheduleReconnectRef.current({
+                  detail: data.details,
+                  status: data.response?.code || undefined,
+                  host: hostOf(data.url ?? data.frag?.url ?? data.context?.url),
+                })
                 break
               case Hls.ErrorTypes.MEDIA_ERROR:
                 hls.recoverMediaError()
@@ -365,31 +366,80 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           setLoading(false)
           video.play().catch(() => {})
         }, { once: true, signal: loadAbort.signal })
+        video.addEventListener('playing', onStreamHealthy, { once: true, signal: loadAbort.signal })
 
         video.addEventListener('error', () => {
-          const ch = channelRef.current
-          if (ch.fallbackUrl && url !== ch.fallbackUrl) {
-            if (!ch.fallbackUrl.endsWith('.m3u8')) {
-              onFallbackToIframe?.(ch.fallbackUrl)
-              return
-            }
-            loadStream(ch.fallbackUrl)
-          } else {
-            setError('שגיאה בטעינת השידור')
-          }
+          scheduleReconnectRef.current({ detail: `nativeError${video.error?.code ?? ''}`, host: hostOf(url) })
         }, { once: true, signal: loadAbort.signal })
       } else {
         setError('הדפדפן אינו תומך בהפעלת וידאו')
       }
-    }, [setLoading, setError, onFallbackToIframe])
+    }, [setLoading, setError, onStreamHealthy])
+
+    // Retry a dropped stream after a pause; give up only when the budget is
+    // spent (website fallback if the channel has one, else an error).
+    useEffect(() => {
+      scheduleReconnectRef.current = (info) => {
+        const ch = channelRef.current
+        const attempt = reconnectAttemptRef.current
+        const gen = loadGenRef.current
+        report({ kind: 'error', channel: ch.id, attempt, ...info })
+
+        clearTimeout(reconnectTimerRef.current)
+        clearTimeout(healthyTimerRef.current)
+        loadAbortRef.current?.abort()
+        loadAbortRef.current = null
+        if (hlsRef.current) {
+          rememberBandwidth(hlsRef.current)
+          hlsRef.current.destroy()
+          hlsRef.current = null
+        }
+
+        if (attempt >= RECONNECT_DELAYS_MS.length) {
+          setReconnecting(false)
+          const site = ch.fallbackUrl && !ch.fallbackUrl.endsWith('.m3u8') ? ch.fallbackUrl : undefined
+          report({ kind: site ? 'fallback' : 'gave_up', channel: ch.id, detail: info.detail, attempt })
+          if (site) onFallbackToIframe?.(site)
+          else setError('שגיאה בטעינת השידור')
+          return
+        }
+
+        reconnectAttemptRef.current = attempt + 1
+        troubleSinceRef.current ??= Date.now()
+        setReconnecting(true)
+        setLoading(true)
+        keepAudioOutputAwake(AUDIO_HOLD_LOADING_MS)
+
+        reconnectTimerRef.current = setTimeout(() => {
+          if (loadGenRef.current !== gen) return
+          if (ch.resolveUrl) {
+            // force=true: a fresh token, not the cached (possibly rejected) one.
+            ch.resolveUrl(true).then((freshUrl) => {
+              if (loadGenRef.current === gen) loadStream(freshUrl)
+            }).catch((err) => {
+              if (loadGenRef.current !== gen) return
+              const msg = userMessageOf(err)
+              if (msg) setError(msg)
+              else scheduleReconnectRef.current({ detail: 'resolveError', host: hostOf(ch.streamUrl) })
+            })
+          } else {
+            // A channel with a backup stream alternates between the two.
+            const backup = ch.fallbackUrl?.endsWith('.m3u8') ? ch.fallbackUrl : undefined
+            loadStream(backup && attempt % 2 === 1 ? backup : ch.streamUrl)
+          }
+        }, RECONNECT_DELAYS_MS[attempt])
+      }
+    }, [loadStream, setLoading, setError, setReconnecting, onFallbackToIframe])
 
     // Load stream on channel change — resolve dynamic URL if needed
     useEffect(() => {
       let cancelled = false
-      // Keep the latest-channel ref and reset the re-resolve budget for the
+      // Keep the latest-channel ref and reset the reconnect budget for the
       // newly selected channel.
       channelRef.current = channel
-      resolveAttemptsRef.current = 0
+      reconnectAttemptRef.current = 0
+      troubleSinceRef.current = null
+      setReconnecting(false)
       loadGenRef.current += 1
       // A freshly selected channel should start playing.
       wantsPlayRef.current = true
@@ -410,18 +460,12 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           if (!cancelled) {
             warn('Failed to resolve stream URL:', err)
             // Resolver may attach a Hebrew `userMessage` for cases like a stale
-            // upstream where we'd rather show the truth than silently iframe to
-            // a blocked page or play 30 seconds of yesterday's news on loop.
-            const userMsg = (err && typeof err === 'object' && 'userMessage' in err)
-              ? (err as { userMessage?: string }).userMessage
-              : undefined
-            if (userMsg) {
-              setError(userMsg)
-            } else if (channel.fallbackUrl) {
-              onFallbackToIframe?.(channel.fallbackUrl)
-            } else {
-              setError('שגיאה בטעינת השידור')
-            }
+            // upstream (or Channel 16 being off the air) — show the truth
+            // rather than retrying. Anything else (e.g. the token API
+            // overloaded) gets the normal reconnect treatment.
+            const userMsg = userMessageOf(err)
+            if (userMsg) setError(userMsg)
+            else scheduleReconnectRef.current({ detail: 'resolveError', host: hostOf(channel.streamUrl) })
           }
         })
       } else {
@@ -430,6 +474,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       return () => {
         cancelled = true
+        clearTimeout(reconnectTimerRef.current)
+        clearTimeout(healthyTimerRef.current)
         loadAbortRef.current?.abort()
         loadAbortRef.current = null
         if (hlsRef.current) {
@@ -437,7 +483,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           hlsRef.current = null
         }
       }
-    }, [channel, retryNonce, loadStream, setLoading, setError, onFallbackToIframe])
+    }, [channel, retryNonce, loadStream, setLoading, setError, setReconnecting])
 
     // Mirror the real play state (of whichever element is active) into the
     // store — drives the wake lock and controls — and into the Media Session,
@@ -447,7 +493,26 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     useEffect(() => {
       const video = videoRef.current
       const audio = audioRef.current
+      // Freezes mid-playback (not the initial load) are worth reporting.
+      let playedThisLoad = false
+      let waitingSince: number | null = null
+      const trackStall = (e: Event) => {
+        if (e.type === 'emptied') {
+          playedThisLoad = false
+          waitingSince = null
+        } else if (e.type === 'waiting' && playedThisLoad && wantsPlayRef.current) {
+          waitingSince ??= performance.now()
+        } else if (e.type === 'playing') {
+          if (waitingSince != null) {
+            const ms = Math.round(performance.now() - waitingSince)
+            if (ms >= STALL_REPORT_MS) report({ kind: 'stall', channel: channelRef.current.id, ms })
+          }
+          playedThisLoad = true
+          waitingSince = null
+        }
+      }
       const sync = (e: Event) => {
+        if (e.target === (isSwappedRef.current ? audio : video)) trackStall(e)
         if (e.target === video && document.visibilityState === 'visible' && !isSwappedRef.current) {
           if (e.type === 'play') wantsPlayRef.current = true
           else if (e.type === 'pause' && video?.currentSrc) wantsPlayRef.current = false
