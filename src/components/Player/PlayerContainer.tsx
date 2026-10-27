@@ -6,6 +6,8 @@ import { PlayerControls } from './PlayerControls'
 import { Spinner } from '../ui/Spinner'
 import { AVDebug } from './AVDebug'
 import { isAVDebugEnabled } from '../../lib/avDebug'
+import { probeStream } from '../../lib/hlsLive'
+import { report } from '../../lib/telemetry'
 import { useTvStore } from '../../stores/tvStore'
 import { usePiP } from '../../hooks/usePiP'
 import { useMediaSession } from '../../hooks/useMediaSession'
@@ -16,6 +18,12 @@ const CONTROLS_TIMEOUT = 5000
 // Max gap between taps for a double-tap (and for chaining further skips).
 const DOUBLE_TAP_MS = 300
 const SKIP_SECONDS = 10
+// While showing a channel's website (the direct stream failed), check the
+// direct stream this often and switch back once it is healthy again. If it
+// fails again soon after a return, wait longer before the next try.
+const RETURN_PROBE_MS = 60_000
+const RETURN_PROBE_MAX_MS = 10 * 60_000
+const RETURN_FLAP_WINDOW_MS = 3 * 60_000
 
 type SkipSide = 'back' | 'fwd'
 
@@ -23,6 +31,7 @@ export function PlayerContainer() {
   const currentChannel = useTvStore((s) => s.currentChannel)
   const isLoading = useTvStore((s) => s.isLoading)
   const error = useTvStore((s) => s.error)
+  const reconnecting = useTvStore((s) => s.reconnecting)
   const isPlaying = useTvStore((s) => s.isPlaying)
   const nextChannel = useTvStore((s) => s.nextChannel)
   const prevChannel = useTvStore((s) => s.prevChannel)
@@ -133,6 +142,39 @@ export function PlayerContainer() {
 
   useMediaSession(currentChannel, nextChannel, prevChannel, onPlay, onPause)
 
+  // Leave the website fallback as soon as the direct stream works again.
+  const returnStateRef = useRef<{ channelId: string; delay: number; returnedAt: number } | null>(null)
+  useEffect(() => {
+    if (!iframeFallback || iframeFallback.channelId !== currentChannel.id) return
+    const ch = currentChannel
+    const prev = returnStateRef.current
+    // Back on the website again shortly after returning: the stream is
+    // flapping, so back off.
+    const delay = prev && prev.channelId === ch.id && Date.now() - prev.returnedAt < RETURN_FLAP_WINDOW_MS
+      ? Math.min(prev.delay * 2, RETURN_PROBE_MAX_MS)
+      : RETURN_PROBE_MS
+    const since = Date.now()
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const check = async () => {
+      if (stopped) return
+      if (document.visibilityState === 'visible') {
+        try {
+          const url = ch.resolveUrl ? await ch.resolveUrl(true) : ch.streamUrl
+          if (!stopped && await probeStream(url) && !stopped) {
+            returnStateRef.current = { channelId: ch.id, delay, returnedAt: Date.now() }
+            report({ kind: 'returned', channel: ch.id, ms: Date.now() - since })
+            retry()
+            return
+          }
+        } catch { /* still down */ }
+      }
+      if (!stopped) timer = setTimeout(check, delay)
+    }
+    timer = setTimeout(check, delay)
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [iframeFallback, currentChannel, retry])
+
   // Determine if we should show iframe (either native iframe channel, or HLS fell back to iframe)
   const showIframe = currentChannel.type === 'iframe' ||
     (iframeFallback && iframeFallback.channelId === currentChannel.id)
@@ -236,7 +278,7 @@ export function PlayerContainer() {
       {/* Loading overlay */}
       {isLoading && !error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/45">
-          <Spinner label={`טוען ${currentChannel.name}…`} />
+          <Spinner label={reconnecting ? 'מתחבר מחדש…' : `טוען ${currentChannel.name}…`} />
         </div>
       )}
 

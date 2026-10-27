@@ -51,3 +51,24 @@ export async function assertPlaylistIsLive(
     }
   }
 }
+
+/**
+ * Cheap health check of a stream: the master playlist and its first variant
+ * both load and the variant lists segments. Used to decide when to leave the
+ * channel's website fallback and go back to the direct stream.
+ */
+export async function probeStream(masterUrl: string): Promise<boolean> {
+  try {
+    const masterText = await (await fetchWithTimeout(masterUrl, {}, 8_000)).text()
+    const variant = masterText
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith('#'))
+    if (!variant) return masterText.includes('#EXTINF')
+    const variantUrl = new URL(variant, masterUrl).toString()
+    const chunkText = await (await fetchWithTimeout(variantUrl, {}, 8_000)).text()
+    return chunkText.includes('#EXTINF')
+  } catch {
+    return false
+  }
+}

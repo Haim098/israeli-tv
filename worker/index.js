@@ -307,12 +307,59 @@ export default {
     const url = new URL(request.url);
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     };
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
+    }
+
+    // Playback-problem reports from the app (stream errors, reconnects,
+    // fallbacks to a channel's website, long stalls). Each one becomes a
+    // structured line in Workers Logs (dashboard → this Worker →
+    // Observability), filterable by field. No database; logs expire on
+    // their own. No IP is kept — only country and network (ISP) name, to tell
+    // a channel's servers failing from a mobile network being congested.
+    if (url.pathname === '/api/log') {
+      if (request.method !== 'POST') {
+        return new Response('POST only', { status: 405, headers: corsHeaders });
+      }
+      const raw = await request.text();
+      if (raw.length > 4000) {
+        return new Response(null, { status: 413, headers: corsHeaders });
+      }
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        return new Response(null, { status: 400, headers: corsHeaders });
+      }
+      const str = (v, max = 80) => (typeof v === 'string' ? v.slice(0, max) : undefined);
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined);
+      const kinds = ['error', 'recovered', 'fallback', 'gave_up', 'returned', 'stall'];
+      if (!kinds.includes(data.kind)) {
+        return new Response(null, { status: 400, headers: corsHeaders });
+      }
+      console.log({
+        tv: data.kind,
+        channel: str(data.channel, 40),
+        detail: str(data.detail),
+        status: num(data.status),
+        host: str(data.host),
+        attempt: num(data.attempt),
+        ms: num(data.ms),
+        session: str(data.session, 16),
+        build: str(data.build, 16),
+        platform: str(data.platform, 16),
+        net: str(data.net, 24),
+        online: data.online === false ? false : undefined,
+        standalone: data.standalone === true ? true : undefined,
+        country: request.cf?.country,
+        isp: request.cf?.asOrganization,
+        asn: request.cf?.asn,
+      });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
     if (url.pathname === '/api/keshet12') {
@@ -401,7 +448,7 @@ export default {
       }
     }
 
-    return new Response('Israeli TV Stream Proxy\n\nEndpoints:\n  GET /api/keshet12 - Get fresh stream URL\n  GET /api/keshet12/stream - Proxied HLS manifest', {
+    return new Response('Israeli TV Stream Proxy\n\nEndpoints:\n  POST /api/log - Playback problem report (Workers Logs)\n  GET /api/keshet12 - Get fresh stream URL\n  GET /api/keshet12/stream - Proxied HLS manifest', {
       headers: { 'Content-Type': 'text/plain' },
     });
   },

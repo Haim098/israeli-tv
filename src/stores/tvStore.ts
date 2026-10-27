@@ -29,10 +29,13 @@ interface TvState {
   error: string | null
   /** True while the active media element (video, or the background audio swap) is playing. */
   isPlaying: boolean
+  /** The stream dropped and the player is retrying (spinner says so). */
+  reconnecting: boolean
   setChannel: (channel: Channel) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   setPlaying: (playing: boolean) => void
+  setReconnecting: (reconnecting: boolean) => void
   nextChannel: () => void
   prevChannel: () => void
 }
@@ -46,28 +49,30 @@ export const useTvStore = create<TvState>((set, get) => ({
   isLoading: false,
   error: null,
   isPlaying: false,
+  reconnecting: false,
   setChannel: (channel) => {
     // Re-selecting the playing channel must not raise the loading spinner:
     // the player doesn't reload for the same channel, so nothing would clear it.
     if (channel.id === get().currentChannel.id) return
     safeSetItem(LAST_CHANNEL_KEY, channel.id)
-    set({ currentChannel: channel, isLoading: true, error: null })
+    set({ currentChannel: channel, isLoading: true, error: null, reconnecting: false })
   },
   setLoading: (isLoading) => set({ isLoading }),
-  setError: (error) => set({ error, isLoading: false }),
+  setError: (error) => set({ error, isLoading: false, reconnecting: false }),
   setPlaying: (isPlaying) => set({ isPlaying }),
+  setReconnecting: (reconnecting) => set({ reconnecting }),
   nextChannel: () => {
     const { channels, currentChannel } = get()
     const idx = channels.findIndex((c) => c.id === currentChannel.id)
     const next = channels[(idx + 1) % channels.length]
     safeSetItem(LAST_CHANNEL_KEY, next.id)
-    set({ currentChannel: next, isLoading: true, error: null })
+    set({ currentChannel: next, isLoading: true, error: null, reconnecting: false })
   },
   prevChannel: () => {
     const { channels, currentChannel } = get()
     const idx = channels.findIndex((c) => c.id === currentChannel.id)
     const prev = channels[(idx - 1 + channels.length) % channels.length]
     safeSetItem(LAST_CHANNEL_KEY, prev.id)
-    set({ currentChannel: prev, isLoading: true, error: null })
+    set({ currentChannel: prev, isLoading: true, error: null, reconnecting: false })
   },
 }))
