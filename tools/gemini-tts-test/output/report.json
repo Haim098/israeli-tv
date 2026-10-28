@@ -1,6 +1,137 @@
 {
   "model": "gemini-3.8-flash-tts",
   "text": "בלילה ההוא, כשכולם ברחו מהאש, הוא רץ פנימה. שלוש פעמים חזר אל הבניין הבוער, ובכל פעם יצא עם ילד בזרועותיו. עד היום, אף אחד מהם לא שוכח את שמו.",
-  "requests": [],
-  "skipped": "no GEMINI_API_KEY secret"
+  "requests": [
+    {
+      "api": "interactions",
+      "voice": "Kore",
+      "http_status": 200,
+      "seconds": 6.66,
+      "audio": {
+        "file": "hebrew_Kore_interactions.wav",
+        "bytes": 1037156,
+        "sample_rate": 24000,
+        "channels": 1,
+        "bits": 16,
+        "seconds": 21.48,
+        "mime_from_api": "audio/wav"
+      },
+      "response": {
+        "id": "v1_Chd1S2ZoYXNQdU1jSDQtOFlQM1pya3NBURIXdUtmaGFzUHVNY0g0LThZUDNacmtzQVE",
+        "status": "completed",
+        "usage": {
+          "total_tokens": 602,
+          "total_input_tokens": 65,
+          "input_tokens_by_modality": [
+            {
+              "modality": "text",
+              "tokens": 65
+            }
+          ],
+          "total_cached_tokens": 0,
+          "total_output_tokens": 537,
+          "output_tokens_by_modality": [
+            {
+              "modality": "audio",
+              "tokens": 537
+            }
+          ],
+          "total_tool_use_tokens": 0,
+          "total_thought_tokens": 0,
+          "initial_input_tokens": 73
+        },
+        "created": "2026-10-28T07:43:58Z",
+        "updated": "2026-10-28T07:43:58Z",
+        "service_tier": "standard",
+        "steps": [
+          {
+            "content": [
+              {
+                "data": "[audio omitted]",
+                "mime_type": "audio/wav",
+                "type": "audio"
+              }
+            ],
+            "type": "model_output"
+          }
+        ],
+        "object": "interaction",
+        "model": "gemini-3.8-flash-tts"
+      }
+    },
+    {
+      "api": "generateContent",
+      "voice": "Charon",
+      "http_status": 200,
+      "seconds": 4.56,
+      "audio": {
+        "file": "hebrew_Charon_generateContent.wav",
+        "bytes": 701156,
+        "sample_rate": 24000,
+        "channels": 1,
+        "bits": 16,
+        "seconds": 14.48,
+        "mime_from_api": "audio/wav"
+      },
+      "response": {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "inlineData": {
+                    "mimeType": "audio/wav",
+                    "data": "[audio omitted]"
+                  }
+                }
+              ],
+              "role": "model"
+            },
+            "finishReason": "STOP",
+            "index": 0
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 64,
+          "candidatesTokenCount": 362,
+          "totalTokenCount": 426,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 64
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "AUDIO",
+              "tokenCount": 362
+            }
+          ],
+          "serviceTier": "standard"
+        },
+        "modelVersion": "gemini-3.8-flash-tts",
+        "responseId": "v6fhavatFvm_jMcPooev8Qg"
+      }
+    }
+  ],
+  "model_info": {
+    "status": 200,
+    "body": {
+      "name": "models/gemini-3.8-flash-tts",
+      "version": "3.8-flash-tts",
+      "displayName": "Gemini 3.8 Flash TTS",
+      "description": "Gemini 3.8 Flash TTS",
+      "inputTokenLimit": 8192,
+      "outputTokenLimit": 16384,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "batchGenerateContent"
+      ],
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 64,
+      "maxTemperature": 2
+    }
+  }
 }
