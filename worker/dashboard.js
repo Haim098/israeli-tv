@@ -125,8 +125,9 @@ function render(d) {
   document.getElementById('k-peak').textContent = today.peak_online || d.online;
   document.getElementById('k-peak-s').textContent = 'אתמול ' + (yest.peak_online || 0);
   const liveSecs = Object.values(d.liveWatch).reduce((a, b) => a + b, 0);
-  document.getElementById('k-watch').textContent = fmtH((today.watch || 0) + liveSecs);
-  document.getElementById('k-watch-s').textContent = 'אתמול ' + fmtH(yest.watch || 0);
+  const watchOf = (o) => Object.entries(o).reduce((a, [k, n]) => a + (k.startsWith('watch:') ? n : 0), 0);
+  document.getElementById('k-watch').textContent = fmtH(watchOf(today) + liveSecs);
+  document.getElementById('k-watch-s').textContent = 'אתמול ' + fmtH(watchOf(yest));
 
   // Now watching, per channel
   const now = {};
@@ -201,17 +202,58 @@ function render(d) {
   document.getElementById('upd').textContent = 'עודכן ' + timeFmt.format(new Date(d.now));
 }
 
+// The 30-day history is fetched every 5 minutes; every 10 seconds only the
+// live part (who's on now, today's totals, new timeline points) is fetched
+// and merged in. Keeps the dashboard inside Cloudflare's free read quota.
 const qs = location.search;
-async function load() {
+const FULL_MS = 5 * 60e3;
+let full = null;
+let fullAt = 0;
+
+async function get(extra) {
+  const sep = qs ? '&' : '?';
+  const r = await fetch('/api/stats' + qs + (extra ? sep + extra : ''), { cache: 'no-store' });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function merge(l) {
+  full.now = l.now;
+  full.online = l.online;
+  full.watching = l.watching;
+  full.viewers = l.viewers;
+  full.liveWatch = l.liveWatch;
+  for (const r of l.counters) {
+    const i = full.counters.findIndex((c) => c.day === r.day && c.key === r.key);
+    if (i >= 0) full.counters[i] = r; else full.counters.push(r);
+  }
+  for (const p of l.timeline) {
+    const last = full.timeline[full.timeline.length - 1];
+    if (!last || p.ts > last.ts) full.timeline.push(p);
+  }
+  // Keep the last point before the 24h window, drop older ones.
+  const start = l.now - 24 * 3600e3;
+  while (full.timeline.length > 1 && full.timeline[1].ts < start) full.timeline.shift();
+}
+
+async function load(forceFull) {
   try {
-    const r = await fetch('/api/stats' + qs, { cache: 'no-store' });
-    if (!r.ok) throw new Error(r.status);
-    render(await r.json());
+    if (forceFull || !full || Date.now() - fullAt > FULL_MS) {
+      full = await get('');
+      fullAt = Date.now();
+    } else {
+      const last = full.timeline[full.timeline.length - 1];
+      const l = await get('part=live&since=' + (last ? last.ts : l0()));
+      if (l.today !== full.today) return load(true); // new day: refetch history
+      merge(l);
+    }
+    render(full);
   } catch (e) {
     document.getElementById('upd').textContent = 'שגיאה בטעינה, מנסה שוב…';
   }
 }
-load();
+function l0() { return Date.now() - 24 * 3600e3; }
+load(true);
 setInterval(() => { if (!document.hidden) load(); }, 10000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 </script>
