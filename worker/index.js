@@ -300,10 +300,23 @@ async function getKeshet12StreamUrl() {
   return streamUrl + '&' + ticket;
 }
 
+import { DASHBOARD_HTML } from './dashboard.js';
+
 // --- Cloudflare Worker entry point ---
 
+export { Stats } from './stats.js';
+
+function statsStub(env) {
+  return env.STATS.get(env.STATS.idFromName('global'));
+}
+
+// Optional: set a STATS_KEY secret to require ?key=... on the dashboard.
+function statsAllowed(url, env) {
+  return !env.STATS_KEY || url.searchParams.get('key') === env.STATS_KEY;
+}
+
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
@@ -359,7 +372,44 @@ export default {
         isp: request.cf?.asOrganization,
         asn: request.cf?.asn,
       });
+      // Also keep it for the usage dashboard (counts per day + recent list).
+      if (env.STATS) {
+        ctx.waitUntil(
+          statsStub(env)
+            .fetch('https://stats/event', {
+              method: 'POST',
+              body: JSON.stringify({
+                kind: data.kind,
+                channel: str(data.channel, 40),
+                detail: str(data.detail),
+                status: num(data.status),
+                host: str(data.host),
+                platform: str(data.platform, 16),
+                country: request.cf?.country,
+                isp: request.cf?.asOrganization,
+              }),
+            })
+            .catch(() => {}),
+        );
+      }
       return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    // Live presence: one WebSocket per open copy of the app.
+    if (url.pathname === '/api/live') {
+      if (!env.STATS) return new Response('Not configured', { status: 503 });
+      return statsStub(env).fetch(new Request('https://stats/live' + url.search, request));
+    }
+
+    // Usage dashboard and its data.
+    if (url.pathname === '/stats' || url.pathname === '/api/stats') {
+      if (!statsAllowed(url, env)) return new Response('Forbidden', { status: 403 });
+      if (url.pathname === '/stats') {
+        return new Response(DASHBOARD_HTML, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex' },
+        });
+      }
+      return statsStub(env).fetch('https://stats/data');
     }
 
     if (url.pathname === '/api/keshet12') {
@@ -448,7 +498,7 @@ export default {
       }
     }
 
-    return new Response('Israeli TV Stream Proxy\n\nEndpoints:\n  POST /api/log - Playback problem report (Workers Logs)\n  GET /api/keshet12 - Get fresh stream URL\n  GET /api/keshet12/stream - Proxied HLS manifest', {
+    return new Response('Israeli TV Stream Proxy\n\nEndpoints:\n  GET /stats - Usage dashboard\n  GET /api/live - Live presence (WebSocket)\n  POST /api/log - Playback problem report (Workers Logs)\n  GET /api/keshet12 - Get fresh stream URL\n  GET /api/keshet12/stream - Proxied HLS manifest', {
       headers: { 'Content-Type': 'text/plain' },
     });
   },

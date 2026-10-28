@@ -9,3 +9,13 @@ mode = "smart"
 
 [observability]
 enabled = true
+
+# Live viewer count + usage history (see stats.js). SQLite-backed, so it
+# works on the free plan.
+[[durable_objects.bindings]]
+name = "STATS"
+class_name = "Stats"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Stats"]
