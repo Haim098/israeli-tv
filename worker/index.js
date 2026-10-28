@@ -300,7 +300,7 @@ async function getKeshet12StreamUrl() {
   return streamUrl + '&' + ticket;
 }
 
-import { DASHBOARD_HTML } from './dashboard.js';
+import DASHBOARD_HTML from './dashboard.html';
 
 // --- Cloudflare Worker entry point ---
 
