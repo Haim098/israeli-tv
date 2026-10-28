@@ -409,7 +409,7 @@ export default {
           headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex' },
         });
       }
-      return statsStub(env).fetch('https://stats/data');
+      return statsStub(env).fetch('https://stats/data' + url.search);
     }
 
     if (url.pathname === '/api/keshet12') {
