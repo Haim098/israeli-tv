@@ -1,0 +1,43 @@
+# Checks what the CLOUDFLARE_API_TOKEN secret can read (visitor analytics,
+# worker request counts, worker logs) and prints only totals, never data rows.
+name: Cloudflare stats check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check
+        run: |
+          set -u
+          api() { curl -sS -H "Authorization: Bearer $CF_TOKEN" -H 'Content-Type: application/json' "$@"; }
+          echo "== token"
+          api https://api.cloudflare.com/client/v4/user/tokens/verify | jq -c '{success, status: .result.status, errors}'
+          ACC=$(api https://api.cloudflare.com/client/v4/accounts | jq -r '.result[0].id')
+          echo "::add-mask::$ACC"
+          echo "account found: $([ -n "$ACC" ] && [ "$ACC" != null ] && echo yes || echo no)"
+          SINCE=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "== visitor analytics (last 24h)"
+          Q='query($a:String!,$s:Time!,$n:Time!){viewer{accounts(filter:{accountTag:$a}){rumPageloadEventsAdaptiveGroups(limit:20,filter:{datetime_geq:$s,datetime_leq:$n}){count sum{visits} dimensions{requestHost}}}}}'
+          api https://api.cloudflare.com/client/v4/graphql \
+            -d "$(jq -n --arg q "$Q" --arg a "$ACC" --arg s "$SINCE" --arg n "$NOW" '{query:$q,variables:{a:$a,s:$s,n:$n}}')" \
+            | jq -c '{errors: (.errors // [] | map(.message)), rows: .data.viewer.accounts[0].rumPageloadEventsAdaptiveGroups}'
+
+          echo "== worker requests (last 24h)"
+          Q='query($a:String!,$s:Time!,$n:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:10,filter:{datetime_geq:$s,datetime_leq:$n,scriptName:"israeli-tv-proxy"}){sum{requests errors}}}}}'
+          api https://api.cloudflare.com/client/v4/graphql \
+            -d "$(jq -n --arg q "$Q" --arg a "$ACC" --arg s "$SINCE" --arg n "$NOW" '{query:$q,variables:{a:$a,s:$s,n:$n}}')" \
+            | jq -c '{errors: (.errors // [] | map(.message)), rows: .data.viewer.accounts[0].workersInvocationsAdaptive}'
+
+          echo "== worker logs (last 24h)"
+          FROM=$(( ($(date +%s) - 86400) * 1000 )); TO=$(( $(date +%s) * 1000 ))
+          BODY=$(jq -n --argjson f $FROM --argjson t $TO '{queryId:"stats-check",timeframe:{from:$f,to:$t},view:"calculations",parameters:{datasets:["cloudflare-workers"],filters:[{key:"$metadata.service",operation:"eq",type:"string",value:"israeli-tv-proxy"}],calculations:[{operator:"count"}],groupBys:[]}}')
+          api "https://api.cloudflare.com/client/v4/accounts/$ACC/workers/observability/telemetry/query" -d "$BODY" \
+            | jq -c '{success, errors, result: (.result | tostring | .[0:600])}'
