@@ -206,6 +206,8 @@ export class Stats {
         playing: p.get('pl') === '1',
         since: now,
         start: now,
+        // Random per-connection key, so the dashboard can tell viewers apart.
+        k: Math.random().toString(36).slice(2, 10),
         platform: clip(p.get('p'), 12) || 'other',
         country: clip(cf.country, 4) || '??',
         isp: clip(cf.asOrganization, 40),
@@ -304,6 +306,7 @@ export class Stats {
       .map((ws) => ws.deserializeAttachment())
       .filter(Boolean)
       .map((a) => ({
+        k: a.k || a.start.toString(36),
         ch: a.ch,
         playing: !!a.playing,
         platform: a.platform,
