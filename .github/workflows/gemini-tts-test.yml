@@ -1,5 +1,7 @@
 # One-off test of Gemini TTS for Hebrew narration (not part of the site).
-# Uses the GEMINI_API_KEY repo secret; uploads the WAV clips and report.json.
+# Uses the GEMINI_API_KEY repo secret. The WAV clips and report.json are
+# committed back to this test branch under tools/gemini-tts-test/output/
+# (and also uploaded as an artifact).
 name: Gemini TTS test
 
 on:
@@ -8,10 +10,14 @@ on:
     branches: [claude/project-thread-5487y2]
     paths:
       - .github/workflows/gemini-tts-test.yml
-      - tools/gemini-tts-test/**
+      - tools/gemini-tts-test/tts_test.py
+      - tools/gemini-tts-test/run.txt
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: gemini-tts-test
 
 jobs:
   tts:
@@ -31,3 +37,15 @@ jobs:
           name: gemini-tts-hebrew
           path: out/
           retention-days: 3
+      - name: Commit results to the test branch
+        run: |
+          rm -rf tools/gemini-tts-test/output
+          mkdir -p tools/gemini-tts-test/output
+          cp -r out/. tools/gemini-tts-test/output/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/gemini-tts-test/output
+          git diff --cached --quiet && exit 0
+          git commit -m "Gemini TTS test output (run ${{ github.run_id }})"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
