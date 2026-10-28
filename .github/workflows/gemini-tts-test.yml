@@ -1,0 +1,33 @@
+# One-off test of Gemini TTS for Hebrew narration (not part of the site).
+# Uses the GEMINI_API_KEY repo secret; uploads the WAV clips and report.json.
+name: Gemini TTS test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-5487y2]
+    paths:
+      - .github/workflows/gemini-tts-test.yml
+      - tools/gemini-tts-test/**
+
+permissions:
+  contents: read
+
+jobs:
+  tts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate Hebrew sample
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python tools/gemini-tts-test/tts_test.py out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gemini-tts-hebrew
+          path: out/
+          retention-days: 3
