@@ -36,10 +36,9 @@ export default defineConfig({
         theme_color: '#0a0a0a',
         background_color: '#0a0a0a',
         display: 'standalone',
-        // The device's natural orientation at launch: portrait on phones,
-        // landscape on most tablets. useOrientationLock then keeps phones in
-        // portrait and lets tablets rotate freely.
-        orientation: 'natural',
+        // Any orientation: tablets must be free to rotate even if the
+        // runtime lock is refused. useOrientationLock keeps phones portrait.
+        orientation: 'any',
         dir: 'rtl',
         lang: 'he',
         start_url: '/',
