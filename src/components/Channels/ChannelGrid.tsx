@@ -16,7 +16,7 @@ export function ChannelGrid() {
   }), [channels])
 
   return (
-    <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-2">
+    <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 wide:grid-cols-2 short:gap-2">
       {channels.map((channel) => (
         <ChannelCard
           key={channel.id}

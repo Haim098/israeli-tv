@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/* Side-by-side layout (player beside the channel list): desktops, and
+   tablets held sideways. Phones turned sideways are too short for it. */
+@custom-variant wide {
+  @media (min-width: 1024px), (orientation: landscape) and (min-width: 768px) and (min-height: 480px) {
+    @slot;
+  }
+}
+/* Landscape screens too short for full-size channel cards. */
+@custom-variant short {
+  @media (orientation: landscape) and (max-height: 760px) {
+    @slot;
+  }
+}
+
 @theme {
   --color-surface: #121212;
   --color-surface-light: #1e1e1e;
