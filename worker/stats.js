@@ -25,7 +25,19 @@ const KEEP_DAYS = 45;
 const SESSION_GAP_MS = 30 * 60e3; // reconnect within this = same session
 const LAST_SEEN_STEP_MS = 5 * 60e3; // refresh "last seen" at most this often
 const FULL_CACHE_MS = 60e3;
-const PROBLEM_KINDS = ['error', 'fallback', 'gave_up', 'stall', 'recovered', 'returned'];
+const EVENT_KINDS = ['error', 'fallback', 'gave_up', 'stall', 'recovered', 'returned', 'media', 'crash', 'start'];
+// Kinds that count as a problem with a channel (per-channel and per-ISP totals).
+const CHANNEL_PROBLEMS = ['error', 'fallback', 'gave_up', 'stall', 'media'];
+// A channel start slower than this is kept in the events list; faster ones
+// only add to the per-channel average.
+const SLOW_START_MS = 8000;
+// Columns added after the first version of the events table.
+const EVENT_COLUMNS = {
+  ms: 'INTEGER', reason: 'TEXT', session: 'TEXT', net: 'TEXT', bg: 'INTEGER', build: 'TEXT',
+  kbps: 'INTEGER', bw: 'INTEGER', frag: 'INTEGER', buf: 'REAL', attempt: 'INTEGER',
+};
+const EVENT_FIELDS =
+  'ts, kind, channel, detail, reason, status, host, ms, attempt, bg, kbps, bw, frag, buf, net, session, build, country, isp, platform';
 
 function dayOf(ts) {
   // en-CA formats as YYYY-MM-DD
@@ -58,6 +70,10 @@ export class Stats {
         host TEXT, country TEXT, isp TEXT, platform TEXT);
       CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
     `);
+    const have = new Set(this.sql.exec('PRAGMA table_info(events)').toArray().map((r) => r.name));
+    for (const [col, type] of Object.entries(EVENT_COLUMNS)) {
+      if (!have.has(col)) this.sql.exec(`ALTER TABLE events ADD COLUMN ${col} ${type}`);
+    }
     // One-time move from the first version's tables.
     const old = new Set(
       this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table'").toArray().map((r) => r.name),
@@ -229,15 +245,41 @@ export class Stats {
 
     if (url.pathname === '/event' && request.method === 'POST') {
       const e = await request.json();
-      if (!PROBLEM_KINDS.includes(e.kind)) return new Response(null, { status: 400 });
-      this.sql.exec(
-        'INSERT INTO events (ts, kind, channel, detail, status, host, country, isp, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        now, e.kind, clip(e.channel), clip(e.detail, 80), Number.isFinite(e.status) ? e.status : null,
-        clip(e.host, 80), clip(e.country, 4), clip(e.isp), clip(e.platform, 12),
-      );
+      if (!EVENT_KINDS.includes(e.kind)) return new Response(null, { status: 400 });
+      const int = (v) => (Number.isFinite(v) ? Math.round(v) : null);
       const day = dayOf(now);
-      this.add(day, 'problem:' + e.kind);
-      if (e.channel && e.kind !== 'recovered' && e.kind !== 'returned') this.add(day, 'problem_ch:' + clip(e.channel));
+      const ch = clip(e.channel);
+      const ms = int(e.ms);
+
+      if (e.kind === 'start') {
+        // Start-up time: per-channel totals for the average, plus a row in
+        // the events list only when it was slow.
+        if (!ch || ms == null || ms < 0 || ms > 10 * 60e3) return new Response(null, { status: 204 });
+        this.add(day, 'start_n:' + ch);
+        this.add(day, 'start_ms:' + ch, ms);
+        if (ms < SLOW_START_MS) return new Response(null, { status: 204 });
+        this.add(day, 'slow_ch:' + ch);
+      } else {
+        this.add(day, 'problem:' + e.kind);
+      }
+      if (ch && CHANNEL_PROBLEMS.includes(e.kind)) {
+        this.add(day, 'problem_ch:' + ch);
+        if (e.isp) this.add(day, 'problem_isp:' + clip(e.isp));
+      }
+      if (ch && e.kind === 'stall') {
+        this.add(day, 'stall_ch:' + ch);
+        if (ms != null) this.add(day, 'stall_ms:' + ch, ms);
+        if (e.bg) this.add(day, 'stall_bg');
+      }
+      if (ch && e.kind === 'error') this.add(day, 'err_ch:' + ch);
+
+      this.sql.exec(
+        `INSERT INTO events (${EVENT_FIELDS}) VALUES (${EVENT_FIELDS.split(',').map(() => '?').join(', ')})`,
+        now, e.kind, ch, clip(e.detail, 80), clip(e.reason, 160), int(e.status), clip(e.host, 80),
+        ms, int(e.attempt), e.bg ? 1 : null, int(e.kbps), int(e.bw), int(e.frag),
+        Number.isFinite(e.buf) ? e.buf : null, clip(e.net, 24), clip(e.session, 16), clip(e.build, 16),
+        clip(e.country, 4), clip(e.isp), clip(e.platform, 12),
+      );
       this.fullCache = null;
       return new Response(null, { status: 204 });
     }
@@ -364,9 +406,13 @@ export class Stats {
         .exec('SELECT ts, online, watching FROM timeline WHERE ts < ? ORDER BY ts DESC LIMIT 1', now - 24 * 3600e3)
         .toArray();
       const events = this.sql
-        .exec('SELECT ts, kind, channel, detail, status, host, country, isp, platform FROM events ORDER BY ts DESC LIMIT 60')
+        .exec(`SELECT ${EVENT_FIELDS} FROM events WHERE kind != 'crash' ORDER BY ts DESC LIMIT 150`)
         .toArray();
-      this.fullCache = { at: now, counters, timeline: before.concat(timeline), events };
+      // Bugs in the app itself, kept apart so playback problems don't push them out.
+      const crashes = this.sql
+        .exec(`SELECT ${EVENT_FIELDS} FROM events WHERE kind = 'crash' AND ts >= ? ORDER BY ts DESC LIMIT 100`, now - 30 * 86400e3)
+        .toArray();
+      this.fullCache = { at: now, counters, timeline: before.concat(timeline), events, crashes };
     }
     const viewers = this.viewers(now);
     return {
@@ -380,6 +426,7 @@ export class Stats {
       liveWatch: this.liveWatch(now),
       timeline: this.fullCache.timeline,
       events: this.fullCache.events,
+      crashes: this.fullCache.crashes,
     };
   }
 }

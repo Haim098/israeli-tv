@@ -3,7 +3,7 @@ import Hls from 'hls.js'
 import type { Channel } from '../../types'
 import { useTvStore } from '../../stores/tvStore'
 import { keepAudioOutputAwake, releaseAudioOutput, setWatching } from '../../lib/audioKeepAlive'
-import { report, hostOf } from '../../lib/telemetry'
+import { report, hostOf, reasonOf, statusOf, type TelemetryEvent } from '../../lib/telemetry'
 
 const isDev = import.meta.env.DEV
 const warn = (...args: unknown[]) => { if (isDev) console.warn(...args) }
@@ -92,6 +92,20 @@ const RECONNECT_DELAYS_MS = [1_500, 3_000, 6_000, 10_000, 15_000]
 const HEALTHY_PLAYBACK_MS = 20_000
 // A freeze waiting for data longer than this is reported.
 const STALL_REPORT_MS = 4_000
+// Default safety margin: play this many segments behind the live edge.
+// hls.js's own default. With 4s segments that is ~12s of video to ride out a
+// slow download; 2 (~8s) froze often on mobile networks. Channels with long
+// segments set a lower count in data/channels.ts.
+const DEFAULT_LIVE_EDGE_SEGMENTS = 3
+// Media (decoder) errors closer together than this count as repeated.
+const MEDIA_ERROR_WINDOW_MS = 15_000
+
+type ReconnectInfo = { detail?: string; reason?: string; status?: number; host?: string }
+type PlaybackContext = Pick<TelemetryEvent, 'bg' | 'kbps' | 'bw' | 'frag' | 'buf'>
+
+// Last non-fatal loading error (hls.js retries those itself). A freeze right
+// after one points at the channel's server rather than a slow connection.
+type LastLoadError = { detail: string; status?: number; host?: string; at: number }
 
 function userMessageOf(err: unknown): string | undefined {
   return err && typeof err === 'object' && 'userMessage' in err
@@ -162,7 +176,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const troubleSinceRef = useRef<number | null>(null)
     // Set by loadStream; lets the error handler (created inside it) schedule
     // a reconnect without a circular hook dependency.
-    const scheduleReconnectRef = useRef<(info: { detail?: string; status?: number; host?: string }) => void>(() => {})
+    const scheduleReconnectRef = useRef<(info: ReconnectInfo) => void>(() => {})
+    // When the current channel load began (for the start-up time report),
+    // cleared once it plays.
+    const startAtRef = useRef<number | null>(null)
+    // How long the last video segment took to download, and the last
+    // loading error hls.js retried on its own.
+    const lastFragMsRef = useRef<number | null>(null)
+    const lastLoadErrorRef = useRef<LastLoadError | null>(null)
     const setLoading = useTvStore((s) => s.setLoading)
     const setError = useTvStore((s) => s.setError)
     const setPlaying = useTvStore((s) => s.setPlaying)
@@ -177,6 +198,32 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     }, [onVideoElement])
 
     const activeEl = () => (isSwappedRef.current ? audioRef.current : videoRef.current)
+
+    // What the player looked like at the moment of a problem: background or
+    // not, quality, download speed, last segment time, buffer ahead.
+    const playbackContext = useCallback((): PlaybackContext => {
+      const hls = hlsRef.current
+      const el = isSwappedRef.current ? audioRef.current : videoRef.current
+      const level = hls && hls.currentLevel >= 0 ? hls.levels[hls.currentLevel] : undefined
+      const bwe = hls?.bandwidthEstimate
+      let buf: number | undefined
+      if (el) {
+        for (let i = 0; i < el.buffered.length; i++) {
+          if (el.buffered.start(i) <= el.currentTime + 0.1 && el.buffered.end(i) >= el.currentTime) {
+            buf = Math.round((el.buffered.end(i) - el.currentTime) * 10) / 10
+          }
+        }
+      }
+      return {
+        bg: document.visibilityState === 'hidden' || isSwappedRef.current || undefined,
+        kbps: level?.bitrate ? Math.round(level.bitrate / 1000) : undefined,
+        // Before the first segment arrives the estimate is just hls.js's
+        // built-in guess, not a measurement.
+        bw: lastFragMsRef.current != null && bwe && Number.isFinite(bwe) && bwe > 0 ? Math.round(bwe / 1000) : undefined,
+        frag: lastFragMsRef.current ?? undefined,
+        buf,
+      }
+    }, [])
 
     const play = useCallback(() => {
       wantsPlayRef.current = true
@@ -242,6 +289,16 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // long it took); refill the retry budget once playback has stayed up.
     const onStreamHealthy = useCallback(() => {
       const ch = channelRef.current
+      if (startAtRef.current != null) {
+        report({
+          kind: 'start',
+          channel: ch.id,
+          ms: Math.round(performance.now() - startAtRef.current),
+          attempt: reconnectAttemptRef.current || undefined,
+          ...playbackContext(),
+        })
+        startAtRef.current = null
+      }
       if (reconnectAttemptRef.current > 0) {
         report({
           kind: 'recovered',
@@ -256,7 +313,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         reconnectAttemptRef.current = 0
         troubleSinceRef.current = null
       }, HEALTHY_PLAYBACK_MS)
-    }, [setReconnecting])
+    }, [setReconnecting, playbackContext])
 
     const loadStream = useCallback((url: string) => {
       const video = videoRef.current
@@ -301,7 +358,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           // this re-fetches from the server.
           backBufferLength: 60,
           liveDurationInfinity: true,
-          liveSyncDurationCount: 2,
+          liveSyncDurationCount: channelRef.current.liveEdgeSegments ?? DEFAULT_LIVE_EDGE_SEGMENTS,
           // Fetch the first fragment while MediaSource is still being attached
           // instead of waiting for it — shaves time off every channel start.
           startFragPrefetch: true,
@@ -314,11 +371,21 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           ...(lastBandwidthEstimate ? { abrEwmaDefaultEstimate: lastBandwidthEstimate } : {}),
         })
         hlsRef.current = hls
+        // Lets browser tests simulate player errors. Dropped from production builds.
+        if (isDev) (window as Window & { __hls?: Hls }).__hls = hls
 
         hls.loadSource(url)
         hls.attachMedia(target)
 
-        hls.on(Hls.Events.FRAG_LOADED, () => rememberBandwidth(hls))
+        hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+          rememberBandwidth(hls)
+          const { start, end } = data.frag.stats.loading
+          if (end > start) lastFragMsRef.current = Math.round(end - start)
+        })
+        lastFragMsRef.current = null
+        lastLoadErrorRef.current = null
+        let mediaErrors = 0
+        let lastMediaErrorAt = 0
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setShowTapToPlay(false)
@@ -332,27 +399,59 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         })
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                // hls.js already retried this request and gave up. Start over
-                // after a pause (re-resolving a fresh token where the channel
-                // needs one).
-                warn('Fatal network error, reconnecting:', data.details)
-                scheduleReconnectRef.current({
-                  detail: data.details,
-                  status: data.response?.code || undefined,
-                  host: hostOf(data.url ?? data.frag?.url ?? data.context?.url),
-                })
-                break
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                hls.recoverMediaError()
-                break
-              default:
-                setError('שגיאה בטעינת השידור')
-                hls.destroy()
-                break
+          if (!data.fatal) {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              lastLoadErrorRef.current = {
+                detail: data.details,
+                status: data.response?.code || undefined,
+                host: hostOf(data.url ?? data.frag?.url ?? data.context?.url),
+                at: performance.now(),
+              }
             }
+            return
+          }
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              // hls.js already retried this request and gave up. Start over
+              // after a pause (re-resolving a fresh token where the channel
+              // needs one).
+              warn('Fatal network error, reconnecting:', data.details)
+              scheduleReconnectRef.current({
+                detail: data.details,
+                reason: reasonOf(data.error) ?? (data.response?.text ? reasonOf(data.response.text, 80) : undefined),
+                status: data.response?.code || undefined,
+                host: hostOf(data.url ?? data.frag?.url ?? data.context?.url),
+              })
+              break
+            case Hls.ErrorTypes.MEDIA_ERROR: {
+              // The decoder choked. Recover in place; if it keeps happening,
+              // try swapping the audio codec, then start over.
+              const now = performance.now()
+              mediaErrors = now - lastMediaErrorAt < MEDIA_ERROR_WINDOW_MS ? mediaErrors + 1 : 1
+              lastMediaErrorAt = now
+              report({
+                kind: 'media',
+                channel: channelRef.current.id,
+                detail: data.details,
+                reason: reasonOf(data.error),
+                attempt: mediaErrors,
+                ...playbackContext(),
+              })
+              if (mediaErrors === 1) {
+                hls.recoverMediaError()
+              } else if (mediaErrors === 2) {
+                hls.swapAudioCodec()
+                hls.recoverMediaError()
+              } else {
+                scheduleReconnectRef.current({ detail: data.details, reason: 'repeated media errors' })
+              }
+              break
+            }
+            default:
+              // Anything else (e.g. a muxer error): start over rather than
+              // giving up straight away.
+              scheduleReconnectRef.current({ detail: data.details, reason: `${data.type}: ${reasonOf(data.error) ?? ''}`.trim() })
+              break
           }
         })
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -374,7 +473,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       } else {
         setError('הדפדפן אינו תומך בהפעלת וידאו')
       }
-    }, [setLoading, setError, onStreamHealthy])
+    }, [setLoading, setError, onStreamHealthy, playbackContext])
 
     // Retry a dropped stream after a pause; give up only when the budget is
     // spent (website fallback if the channel has one, else an error).
@@ -383,7 +482,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const ch = channelRef.current
         const attempt = reconnectAttemptRef.current
         const gen = loadGenRef.current
-        report({ kind: 'error', channel: ch.id, attempt, ...info })
+        report({ kind: 'error', channel: ch.id, attempt, ...info, ...playbackContext() })
 
         clearTimeout(reconnectTimerRef.current)
         clearTimeout(healthyTimerRef.current)
@@ -398,7 +497,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         if (attempt >= RECONNECT_DELAYS_MS.length) {
           setReconnecting(false)
           const site = ch.fallbackUrl && !ch.fallbackUrl.endsWith('.m3u8') ? ch.fallbackUrl : undefined
-          report({ kind: site ? 'fallback' : 'gave_up', channel: ch.id, detail: info.detail, attempt })
+          report({
+            kind: site ? 'fallback' : 'gave_up',
+            channel: ch.id,
+            detail: info.detail,
+            reason: info.reason,
+            attempt,
+            ms: troubleSinceRef.current ? Date.now() - troubleSinceRef.current : undefined,
+          })
           if (site) onFallbackToIframe?.(site)
           else setError('שגיאה בטעינת השידור')
           return
@@ -420,7 +526,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               if (loadGenRef.current !== gen) return
               const msg = userMessageOf(err)
               if (msg) setError(msg)
-              else scheduleReconnectRef.current({ detail: 'resolveError', host: hostOf(ch.streamUrl) })
+              else scheduleReconnectRef.current({ detail: 'resolveError', reason: reasonOf(err), status: statusOf(err), host: hostOf(ch.streamUrl) })
             })
           } else {
             // A channel with a backup stream alternates between the two.
@@ -429,7 +535,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
         }, RECONNECT_DELAYS_MS[attempt])
       }
-    }, [loadStream, setLoading, setError, setReconnecting, onFallbackToIframe])
+    }, [loadStream, setLoading, setError, setReconnecting, onFallbackToIframe, playbackContext])
 
     // Load stream on channel change — resolve dynamic URL if needed
     useEffect(() => {
@@ -441,6 +547,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       troubleSinceRef.current = null
       setReconnecting(false)
       loadGenRef.current += 1
+      startAtRef.current = performance.now()
       // A freshly selected channel should start playing.
       wantsPlayRef.current = true
       setLoading(true)
@@ -465,7 +572,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             // overloaded) gets the normal reconnect treatment.
             const userMsg = userMessageOf(err)
             if (userMsg) setError(userMsg)
-            else scheduleReconnectRef.current({ detail: 'resolveError', host: hostOf(channel.streamUrl) })
+            else scheduleReconnectRef.current({ detail: 'resolveError', reason: reasonOf(err), status: statusOf(err), host: hostOf(channel.streamUrl) })
           }
         })
       } else {
@@ -496,21 +603,49 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       // Freezes mid-playback (not the initial load) are worth reporting.
       let playedThisLoad = false
       let waitingSince: number | null = null
+      let waitingChannel = channelRef.current.id
+      // `ended` says how the freeze ended: undefined = playback came back,
+      // otherwise the viewer left (switched channel / closed the app) while
+      // still frozen — the worst kind, which used to go unreported.
+      const reportStall = (ended?: string) => {
+        if (waitingSince == null) return
+        const ms = Math.round(performance.now() - waitingSince)
+        if (ms >= STALL_REPORT_MS) {
+          // A loading error during the freeze points at the channel's server.
+          const err = lastLoadErrorRef.current
+          const serverError = err && err.at >= waitingSince - 2_000 ? err : null
+          report({
+            kind: 'stall',
+            channel: waitingChannel,
+            ms,
+            detail: ended ?? serverError?.detail,
+            status: serverError?.status,
+            host: serverError?.host,
+            ...playbackContext(),
+            // Measured now, after the freeze ended: not meaningful here.
+            buf: undefined,
+          })
+        }
+        waitingSince = null
+      }
       const trackStall = (e: Event) => {
         if (e.type === 'emptied') {
+          // The stream was torn down mid-freeze: a channel switch, or our own
+          // reconnect / background hand-over.
+          reportStall(channelRef.current.id !== waitingChannel ? 'switched channel while frozen' : 'reloaded while frozen')
           playedThisLoad = false
-          waitingSince = null
         } else if (e.type === 'waiting' && playedThisLoad && wantsPlayRef.current) {
-          waitingSince ??= performance.now()
-        } else if (e.type === 'playing') {
-          if (waitingSince != null) {
-            const ms = Math.round(performance.now() - waitingSince)
-            if (ms >= STALL_REPORT_MS) report({ kind: 'stall', channel: channelRef.current.id, ms })
+          if (waitingSince == null) {
+            waitingSince = performance.now()
+            waitingChannel = channelRef.current.id
           }
+        } else if (e.type === 'playing') {
+          reportStall()
           playedThisLoad = true
-          waitingSince = null
         }
       }
+      const onPageHide = () => reportStall('closed while frozen')
+      window.addEventListener('pagehide', onPageHide)
       const sync = (e: Event) => {
         if (e.target === (isSwappedRef.current ? audio : video)) trackStall(e)
         if (e.target === video && document.visibilityState === 'visible' && !isSwappedRef.current) {
@@ -540,9 +675,10 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       for (const el of [video, audio]) events.forEach((ev) => el?.addEventListener(ev, sync))
       return () => {
         for (const el of [video, audio]) events.forEach((ev) => el?.removeEventListener(ev, sync))
+        window.removeEventListener('pagehide', onPageHide)
         setPlaying(false)
       }
-    }, [setPlaying])
+    }, [setPlaying, playbackContext])
 
     // Background playback: auto-PiP first, fall back to audio swap — but only
     // when the user actually wants it playing.

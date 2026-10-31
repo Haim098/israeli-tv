@@ -34,6 +34,8 @@ export const channels: Channel[] = [
     type: 'hls',
     logo: '/logos/reshet13.png',
     color: '#ff6600',
+    // 6s segments: 2 is already ~12s behind live (3 drifted too far back).
+    liveEdgeSegments: 2,
   },
   {
     id: 'channel14',
@@ -56,6 +58,8 @@ export const channels: Channel[] = [
     logo: '/logos/channel16.png',
     color: '#7b2cbf',
     resolveUrl: getChannel16Url,
+    // 6s segments: 2 is ~12s behind live.
+    liveEdgeSegments: 2,
   },
   {
     id: 'i24news',
@@ -72,6 +76,8 @@ export const channels: Channel[] = [
     logo: '/logos/i24news.jpg',
     color: '#00a0e3',
     resolveUrl: getI24NewsUrl,
+    // 6s segments: 2 is ~12s behind live.
+    liveEdgeSegments: 2,
   },
   {
     id: 'knesset',
@@ -84,5 +90,7 @@ export const channels: Channel[] = [
     type: 'hls',
     logo: '/logos/knesset.png',
     color: '#1a5276',
+    // ~10s segments and only 3 in the playlist: 2 is ~20s behind live.
+    liveEdgeSegments: 2,
   },
 ]

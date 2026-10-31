@@ -162,8 +162,18 @@
   td .tc img { width: 22px; height: 22px; border-radius: 6px; background: #fff; object-fit: contain; padding: 2px; }
   .tag { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--panel-2); color: var(--muted); }
   .tag.on { background: var(--live-soft); color: var(--live); }
-  .k-error, .k-gave_up { color: var(--red); } .k-fallback, .k-stall { color: var(--amber); }
+  .k-error, .k-gave_up, .k-crash { color: var(--red); } .k-fallback, .k-stall, .k-media, .k-start { color: var(--amber); }
   .k-recovered, .k-returned { color: var(--live); }
+  td .sub { display: block; color: var(--faint); font-size: 12px; margin-top: 2px; white-space: normal; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .good { color: var(--live); } .warn { color: var(--amber); } .bad { color: var(--red); }
+  .sess { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .sess i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .sess:hover { color: var(--text); }
+  .card h2 .seg { margin-inline-start: auto; }
+  .card h2 .seg button { padding: 3px 10px; font-size: 12px; }
+  .note { color: var(--faint); font-size: 12px; margin: -6px 0 12px; }
   .empty { color: var(--faint); font-size: 13px; padding: 26px 0; text-align: center; }
 
   footer { color: var(--faint); font-size: 12px; padding-block: 4px 32px; text-align: center; }
@@ -283,8 +293,23 @@
   </section>
 
   <section class="card s12">
+    <h2>איכות השידור לפי ערוץ <span class="hint" id="h-range7"></span></h2>
+    <p class="note">הקפאות לשעת צפייה הן המדד העיקרי: מתחת ל-1 טוב, מעל 3 גרוע. "זמן עלייה" הוא מבחירת הערוץ ועד שהשידור זז.</p>
+    <div class="scroll" id="quality"></div>
+  </section>
+
+  <section class="card s4">
+    <h2>תקלות לפי ספק אינטרנט <span class="hint" id="h-range8"></span></h2>
+    <div id="prob-isp" class="rank red"></div>
+  </section>
+  <section class="card s8">
     <h2>תקלות לפי יום <span class="hint" id="h-range6"></span></h2>
     <div class="chart sm"><canvas id="c-problems" aria-label="תקלות לפי יום"></canvas></div>
+  </section>
+
+  <section class="card s12">
+    <h2>באגים באפליקציה <span class="hint">שגיאות בקוד שלנו, 30 יום</span></h2>
+    <div class="scroll" id="crashes"></div>
   </section>
 
   <section class="card s12">
@@ -292,7 +317,14 @@
     <div class="scroll" id="viewers"></div>
   </section>
   <section class="card s12">
-    <h2>תקלות אחרונות</h2>
+    <h2>תקלות אחרונות <span class="hint" id="ev-hint"></span>
+      <span class="seg" role="group" aria-label="סינון תקלות">
+        <button type="button" data-filter="all" aria-pressed="true">הכול</button>
+        <button type="button" data-filter="stall" aria-pressed="false">הקפאות</button>
+        <button type="button" data-filter="error" aria-pressed="false">שגיאות</button>
+        <button type="button" data-filter="start" aria-pressed="false">עלייה איטית</button>
+      </span>
+    </h2>
     <div class="scroll" id="events"></div>
   </section>
 </main>
@@ -308,7 +340,23 @@ const CH = {
   knesset: ['ערוץ הכנסת', '/logos/knesset.png'],
 };
 const KIND = { error: 'שגיאת שידור', fallback: 'עבר לאתר הערוץ', gave_up: 'ויתר, הוצגה שגיאה',
-  stall: 'השידור נתקע', recovered: 'התאושש', returned: 'חזר לשידור הישיר' };
+  stall: 'השידור נתקע', recovered: 'התאושש', returned: 'חזר לשידור הישיר',
+  media: 'שגיאת פענוח וידאו', crash: 'באג באפליקציה', start: 'עלייה איטית' };
+// Plain-language hints for the technical error names.
+const DETAIL = {
+  manifestLoadError: 'רשימת השידור לא נטענה', manifestLoadTimeOut: 'רשימת השידור לא ענתה בזמן',
+  levelLoadError: 'רשימת האיכות לא נטענה', levelLoadTimeOut: 'רשימת האיכות לא ענתה בזמן',
+  fragLoadError: 'קטע וידאו לא נטען', fragLoadTimeOut: 'קטע וידאו לא ענה בזמן',
+  resolveError: 'לא הצלחנו לקבל כתובת שידור', bufferStalledError: 'נגמר הבאפר',
+  'switched channel while frozen': 'הצופה עבר ערוץ באמצע הקפאה', 'reloaded while frozen': 'הנגן נטען מחדש באמצע הקפאה',
+  'closed while frozen': 'הצופה סגר את האפליקציה באמצע הקפאה',
+};
+const secs = (ms) => (ms == null ? '' : ms >= 60000 ? Math.floor(ms / 60000) + ':' + String(Math.round(ms / 1000) % 60).padStart(2, '0') + ' דק׳' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' שנ׳');
+const mbps = (kbps) => (kbps == null ? '' : kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps');
+// A stable colour per viewer session, so one viewer's events are easy to spot.
+const sessColor = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return 'hsl(' + h + ' 65% 55%)'; };
+let evFilter = 'all';
+let evSession = null;
 const PLAT = { android: 'אנדרואיד', ios: 'אייפון / אייפד', desktop: 'מחשב', other: 'אחר' };
 const chName = (id) => (CH[id] && CH[id][0]) || id || 'לא ידוע';
 const chLogo = (id) => (CH[id] ? SITE + CH[id][1] : '');
@@ -343,10 +391,10 @@ try { range = Number(localStorage.getItem('range')) || 14; } catch (e) { /* stor
 function setRange(n) {
   range = n;
   try { localStorage.setItem('range', String(n)); } catch (e) { /* ignore */ }
-  for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(Number(b.dataset.range) === n));
+  for (const b of document.querySelectorAll('.seg button[data-range]')) b.setAttribute('aria-pressed', String(Number(b.dataset.range) === n));
   if (full) render(full);
 }
-for (const b of document.querySelectorAll('.seg button')) b.addEventListener('click', () => setRange(Number(b.dataset.range)));
+for (const b of document.querySelectorAll('.seg button[data-range]')) b.addEventListener('click', () => setRange(Number(b.dataset.range)));
 
 function lastDays(today, n) {
   const out = []; const t = new Date(today + 'T12:00:00Z');
@@ -460,7 +508,7 @@ function render(d) {
   const watchOf = (o) => Object.keys(o).reduce((a, k) => a + (k.startsWith('watch:') ? o[k] : 0), 0);
   const liveSecs = Object.values(d.liveWatch).reduce((a, b) => a + b, 0);
   const rangeLabel = range + ' ימים';
-  for (let i = 1; i <= 6; i++) { const h = $('h-range' + i); if (h) h.textContent = rangeLabel; }
+  for (let i = 1; i <= 8; i++) { const h = $('h-range' + i); if (h) h.textContent = rangeLabel; }
 
   // Hero
   countTo('k-online', d.online);
@@ -588,9 +636,44 @@ function render(d) {
     ? pch.slice(0, 6).map(([c, n]) => '<div class="it"><span>' + esc(chName(c)) + '</span><b>' + n + '</b><div class="track"><i style="width:' + (n / pMax * 100) + '%"></i></div></div>').join('')
     : '<div class="empty">אין תקלות בטווח הזה</div>';
 
+  // Problems per network (ISP)
+  const pisp = sumBy('problem_isp:');
+  const iMax = Math.max(1, ...pisp.map((r) => r[1]));
+  $('prob-isp').innerHTML = pisp.length
+    ? pisp.slice(0, 8).map(([c, n]) => '<div class="it"><span>' + esc(c) + '</span><b>' + n + '</b><div class="track"><i style="width:' + (n / iMax * 100) + '%"></i></div></div>').join('')
+    : '<div class="empty">אין תקלות בטווח הזה</div>';
+
+  // Stream quality per channel: freezes per watched hour, freeze length,
+  // fatal errors, start-up time.
+  const q = {};
+  const qr = (c) => (q[c] = q[c] || { watch: 0, stalls: 0, stallMs: 0, errors: 0, starts: 0, startMs: 0, slow: 0 });
+  for (const [c, n] of Object.entries(watch)) qr(c).watch = n;
+  const QK = { 'stall_ch:': 'stalls', 'stall_ms:': 'stallMs', 'err_ch:': 'errors', 'start_n:': 'starts', 'start_ms:': 'startMs', 'slow_ch:': 'slow' };
+  for (const r of d.counters) {
+    if (!inRange.has(r.day)) continue;
+    for (const pre in QK) if (r.key.startsWith(pre)) qr(r.key.slice(pre.length))[QK[pre]] += r.n;
+  }
+  const qRows = Object.entries(q).filter(([, v]) => v.watch > 0 || v.stalls || v.errors || v.starts).sort((a, b) => b[1].watch - a[1].watch);
+  const grade = (v, good, bad) => (v <= good ? 'good' : v >= bad ? 'bad' : 'warn');
+  $('quality').innerHTML = qRows.length
+    ? '<table><tr><th>ערוץ</th><th>זמן צפייה</th><th>הקפאות</th><th>הקפאות לשעה</th><th>אורך הקפאה ממוצע</th><th>שגיאות</th><th>זמן עלייה ממוצע</th><th>עליות איטיות</th></tr>' +
+      qRows.map(([c, v]) => {
+        const hours = v.watch / 3600;
+        const perH = hours >= 0.25 ? v.stalls / hours : null;
+        const avgStall = v.stalls ? v.stallMs / v.stalls : null;
+        const avgStart = v.starts ? v.startMs / v.starts : null;
+        return '<tr><td><span class="tc">' + (chLogo(c) ? '<img alt="" src="' + esc(chLogo(c)) + '">' : '') + esc(chName(c)) + '</span></td>' +
+          '<td class="num">' + fmtH(v.watch) + '</td><td class="num">' + v.stalls + '</td>' +
+          '<td class="num ' + (perH == null ? '' : grade(perH, 1, 3)) + '">' + (perH == null ? '–' : perH.toFixed(1)) + '</td>' +
+          '<td class="num">' + (avgStall == null ? '–' : secs(avgStall)) + '</td><td class="num">' + v.errors + '</td>' +
+          '<td class="num ' + (avgStart == null ? '' : grade(avgStart, 3000, 8000)) + '">' + (avgStart == null ? '–' : secs(avgStart)) + '</td>' +
+          '<td class="num">' + (v.starts ? v.slow + ' מתוך ' + v.starts : '–') + '</td></tr>';
+      }).join('') + '</table>'
+    : '<div class="empty">עוד אין נתונים</div>';
+
   // Problems per day
-  const kinds = ['error', 'stall', 'fallback', 'gave_up'];
-  const kc = { error: P.red, stall: P.amber, fallback: P.clay, gave_up: P.violet };
+  const kinds = ['error', 'stall', 'media', 'fallback', 'gave_up', 'crash'];
+  const kc = { error: P.red, stall: P.amber, media: P.teal, fallback: P.clay, gave_up: P.violet, crash: P.pink };
   chart('c-problems', { type: 'bar',
     data: { labels: days.map(dayLabel), datasets: kinds.map((k) => ({ label: KIND[k], data: days.map((x) => (by[x] || {})['problem:' + k] || 0),
       backgroundColor: kc[k], borderRadius: 4 })) },
@@ -607,13 +690,22 @@ function render(d) {
         flag(v.country) + ' ' + esc(countryName(v.country)) + '</td><td>' + esc(v.isp || '') + '</td><td>' + v.minutes + ' דק׳</td></tr>').join('') + '</table>'
     : '<div class="empty">אין כרגע מחוברים</div>';
 
-  // Events table
-  $('events').innerHTML = d.events && d.events.length
-    ? '<table><tr><th>זמן</th><th>ערוץ</th><th>מה קרה</th><th>פרטים</th><th>קוד</th><th>שרת</th><th>ספק</th><th>מכשיר</th></tr>' +
-      d.events.map((e) => '<tr><td>' + dtFmt.format(new Date(e.ts)) + '</td><td>' + esc(chName(e.channel)) + '</td><td class="k-' + esc(e.kind) + '">' + esc(KIND[e.kind] || e.kind) +
-        '</td><td class="wrap">' + esc(e.detail) + '</td><td>' + esc(e.status == null ? '' : e.status) + '</td><td>' + esc(e.host) + '</td><td>' + esc(e.isp) +
-        (e.country ? ' ' + flag(e.country) : '') + '</td><td>' + esc(PLAT[e.platform] || e.platform || '') + '</td></tr>').join('') + '</table>'
-    : '<div class="empty">אין תקלות מתועדות</div>';
+  // App bugs, grouped by message
+  const groups = new Map();
+  for (const e of d.crashes || []) {
+    const g = groups.get(e.detail) || { n: 0, last: e, sessions: new Set(), builds: new Set() };
+    g.n++; g.sessions.add(e.session); if (e.build) g.builds.add(e.build);
+    groups.set(e.detail, g);
+  }
+  $('crashes').innerHTML = groups.size
+    ? '<table><tr><th>שגיאה</th><th>פעמים</th><th>צופים</th><th>לאחרונה</th><th>ערוץ</th><th>מכשיר</th><th>גרסה</th></tr>' +
+      [...groups.entries()].sort((a, b) => b[1].n - a[1].n).map(([msg, g]) =>
+        '<tr><td class="wrap"><b>' + esc(msg) + '</b><span class="sub">' + esc(g.last.reason || '') + '</span></td><td class="num">' + g.n + '</td><td class="num">' + g.sessions.size +
+        '</td><td>' + dtFmt.format(new Date(g.last.ts)) + '</td><td>' + esc(chName(g.last.channel)) + '</td><td>' + esc(PLAT[g.last.platform] || g.last.platform || '') +
+        '</td><td>' + esc([...g.builds].join(', ')) + '</td></tr>').join('') + '</table>'
+    : '<div class="empty">לא נרשמו באגים</div>';
+
+  renderEvents(d);
 
   trackFeed(d);
   const st = $('status');
@@ -621,6 +713,36 @@ function render(d) {
   $('upd').innerHTML = '<b>חי</b> · עודכן ' + secFmt.format(new Date(d.now));
   const ring = $('ring'); ring.classList.remove('run'); void ring.getBoundingClientRect(); ring.classList.add('run');
 }
+
+// ---- recent problems table (filterable by kind, or by one viewer session) ----
+function renderEvents(d) {
+  const match = (e) => (evSession ? e.session === evSession : true) && (
+    evFilter === 'all' ? true : evFilter === 'error' ? ['error', 'gave_up', 'fallback', 'media'].includes(e.kind) : e.kind === evFilter);
+  const list = (d.events || []).filter(match);
+  $('ev-hint').innerHTML = evSession
+    ? 'צופה אחד · <button type="button" class="sess" id="ev-clear">הצג את כולם ✕</button>'
+    : 'לחיצה על נקודת הצבע מציגה רק את התקלות של אותו צופה';
+  if ($('ev-clear')) $('ev-clear').onclick = () => { evSession = null; renderEvents(full); };
+  const player = (e) => [e.kbps != null ? 'איכות ' + mbps(e.kbps) : '', e.buf != null ? 'באפר ' + e.buf + ' שנ׳' : '',
+    e.frag != null ? 'קטע ירד ב-' + secs(e.frag) : '', e.bg ? 'ברקע' : ''].filter(Boolean).join(' · ');
+  const conn = (e) => [e.net || '', e.bw != null ? 'מהירות ' + mbps(e.bw) : ''].filter(Boolean).join(' · ');
+  $('events').innerHTML = list.length
+    ? '<table><tr><th>זמן</th><th>ערוץ</th><th>מה קרה</th><th>משך</th><th>פרטים</th><th>קוד</th><th>שרת</th><th>ספק וחיבור</th><th>נגן</th><th>מכשיר</th><th>צופה</th><th>גרסה</th></tr>' +
+      list.map((e) => '<tr><td>' + dtFmt.format(new Date(e.ts)) + '</td><td>' + esc(chName(e.channel)) + '</td><td class="k-' + esc(e.kind) + '">' + esc(KIND[e.kind] || e.kind) +
+        (e.attempt ? '<span class="sub">ניסיון ' + e.attempt + '</span>' : '') + '</td><td class="num">' + secs(e.ms) +
+        '</td><td class="wrap">' + esc(DETAIL[e.detail] || e.detail || '') + (e.reason ? '<span class="sub">' + esc(e.reason) + '</span>' : '') +
+        '</td><td>' + esc(e.status == null ? '' : e.status) + '</td><td>' + esc(e.host) + '</td><td>' + esc(e.isp) + (e.country ? ' ' + flag(e.country) : '') +
+        '<span class="sub">' + esc(conn(e)) + '</span></td><td class="wrap">' + esc(player(e)) + '</td><td>' + esc(PLAT[e.platform] || e.platform || '') +
+        '</td><td>' + (e.session ? '<button type="button" class="sess" data-s="' + esc(e.session) + '"><i style="background:' + sessColor(e.session) + '"></i>' + esc(e.session.slice(0, 4)) + '</button>' : '') +
+        '</td><td>' + esc(e.build || '') + '</td></tr>').join('') + '</table>'
+    : '<div class="empty">' + (d.events && d.events.length ? 'אין תקלות מהסוג הזה' : 'אין תקלות מתועדות') + '</div>';
+  for (const b of $('events').querySelectorAll('.sess')) b.onclick = () => { evSession = b.dataset.s; renderEvents(full); };
+}
+for (const b of document.querySelectorAll('.seg button[data-filter]')) b.addEventListener('click', () => {
+  evFilter = b.dataset.filter;
+  for (const x of document.querySelectorAll('.seg button[data-filter]')) x.setAttribute('aria-pressed', String(x === b));
+  if (full) renderEvents(full);
+});
 
 // ---- data: history every 5 minutes, the live part every 10 seconds ----
 const qs = location.search;

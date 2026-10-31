@@ -23,6 +23,11 @@ export async function fetchWithTimeout(
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new Error(`Request to ${new URL(url).host} timed out after ${timeoutMs}ms`)
     }
+    // "Failed to fetch" alone doesn't say which server: blocked by the
+    // network (e.g. a filtering ISP), refused by CORS, or offline.
+    if (err instanceof TypeError) {
+      throw new Error(`Could not reach ${new URL(url).host} (${err.message})`)
+    }
     throw err
   } finally {
     clearTimeout(timer)

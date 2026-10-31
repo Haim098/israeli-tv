@@ -1,7 +1,15 @@
 import { useEffect } from 'react'
 
+// Tablets (and unfolded foldables) may rotate freely: watching sideways is
+// what they're for. Android counts 600dp on the shortest side as a tablet.
+const TABLET_MIN_SIDE = 600
+
+function isTablet(): boolean {
+  return Math.min(screen.width, screen.height) >= TABLET_MIN_SIDE
+}
+
 /**
- * Actively locks the app to portrait at runtime — more reliable than the
+ * On phones, actively locks the app to portrait at runtime — more reliable than the
  * manifest `orientation` field, which an already-installed PWA only picks up
  * lazily (and inconsistently) on Android. While a video is fullscreen the lock
  * is relaxed to `any` so the user can rotate freely; on exit it re-locks
@@ -20,7 +28,7 @@ export function useOrientationLock() {
       // active during manual PiP constrains the resizable floating window
       // (white margins / can't enlarge); auto-PiP didn't hit this because it
       // enters from the already-relaxed fullscreen state.
-      const relaxed = !!document.fullscreenElement || !!document.pictureInPictureElement
+      const relaxed = isTablet() || !!document.fullscreenElement || !!document.pictureInPictureElement
       orientation.lock!(relaxed ? 'any' : 'portrait').catch(() => {})
     }
 

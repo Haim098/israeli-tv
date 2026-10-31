@@ -17,7 +17,7 @@ export function ChannelCard({ channel, isActive, onSelect, onIntent }: ChannelCa
       onPointerDown={isActive ? undefined : onIntent}
       onPointerEnter={isActive ? undefined : (e) => { if (e.pointerType === 'mouse') onIntent?.() }}
       className={`
-        relative flex flex-col items-center gap-2 rounded-2xl p-3 transition-all duration-200
+        relative flex flex-col items-center gap-2 rounded-2xl p-3 transition-all duration-200 short:gap-1 short:p-2
         ${isActive
           ? 'channel-active-glow scale-105 border-2 bg-white/10'
           : 'border-2 border-transparent bg-surface-light hover:bg-surface-lighter hover:scale-[1.02] active:scale-95'
@@ -36,7 +36,7 @@ export function ChannelCard({ channel, isActive, onSelect, onIntent }: ChannelCa
         alt={channel.name}
         width={56}
         height={56}
-        className="h-14 w-14 rounded-xl"
+        className="h-14 w-14 rounded-xl short:h-10 short:w-10"
         loading="lazy"
       />
 

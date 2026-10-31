@@ -17,13 +17,17 @@ export default function App() {
           אין חיבור לאינטרנט — השידור יתחדש כשהחיבור יחזור
         </div>
       )}
-      <main className="flex flex-1 flex-col gap-6 px-4 pb-8 lg:flex-row lg:items-center lg:gap-8">
-        <div className="lg:flex-1 lg:min-w-0">
+      <main className="flex flex-1 flex-col gap-6 px-4 pb-8 wide:flex-row wide:items-center wide:justify-center wide:gap-6 wide:pb-4">
+        {/* Side by side, the player is as wide as the screen height allows,
+            so the whole picture fits without scrolling. */}
+        <div className="wide:min-w-0 wide:flex-1 wide:max-w-[calc((100dvh-6rem)*16/9)]">
           <PlayerContainer />
         </div>
-        <section className="lg:w-80 lg:shrink-0">
-          <h2 className="mb-3 text-base font-semibold text-white/70">ערוצים</h2>
-          <ChannelGrid />
+        <section className="wide:flex wide:max-h-[calc(100dvh-5rem)] wide:w-72 wide:shrink-0 wide:flex-col">
+          <h2 className="mb-3 text-base font-semibold text-white/70 short:mb-2">ערוצים</h2>
+          <div className="wide:min-h-0 wide:overflow-y-auto wide:p-1">
+            <ChannelGrid />
+          </div>
         </section>
       </main>
       <footer className="py-4 text-center text-xs text-white/30">

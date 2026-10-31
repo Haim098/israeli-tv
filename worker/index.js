@@ -350,45 +350,42 @@ export default {
       }
       const str = (v, max = 80) => (typeof v === 'string' ? v.slice(0, max) : undefined);
       const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined);
-      const kinds = ['error', 'recovered', 'fallback', 'gave_up', 'returned', 'stall'];
+      const kinds = ['error', 'recovered', 'fallback', 'gave_up', 'returned', 'stall', 'media', 'crash', 'start'];
       if (!kinds.includes(data.kind)) {
         return new Response(null, { status: 400, headers: corsHeaders });
       }
-      console.log({
-        tv: data.kind,
+      // Seconds of buffer keep one decimal; everything else is whole numbers.
+      const buf = typeof data.buf === 'number' && Number.isFinite(data.buf) ? Math.round(data.buf * 10) / 10 : undefined;
+      const event = {
+        kind: data.kind,
         channel: str(data.channel, 40),
         detail: str(data.detail),
+        reason: str(data.reason, 160),
         status: num(data.status),
         host: str(data.host),
         attempt: num(data.attempt),
         ms: num(data.ms),
+        bg: data.bg === true ? true : undefined,
+        kbps: num(data.kbps),
+        bw: num(data.bw),
+        frag: num(data.frag),
+        buf,
         session: str(data.session, 16),
         build: str(data.build, 16),
         platform: str(data.platform, 16),
-        net: str(data.net, 24),
-        online: data.online === false ? false : undefined,
+        // "offline" when the browser itself said there was no network.
+        net: data.online === false ? 'offline' : str(data.net, 24),
         standalone: data.standalone === true ? true : undefined,
         country: request.cf?.country,
         isp: request.cf?.asOrganization,
-        asn: request.cf?.asn,
-      });
+      };
+      const { kind, ...rest } = event;
+      console.log({ tv: kind, ...rest, asn: request.cf?.asn });
       // Also keep it for the usage dashboard (counts per day + recent list).
       if (env.STATS) {
         ctx.waitUntil(
           statsStub(env)
-            .fetch('https://stats/event', {
-              method: 'POST',
-              body: JSON.stringify({
-                kind: data.kind,
-                channel: str(data.channel, 40),
-                detail: str(data.detail),
-                status: num(data.status),
-                host: str(data.host),
-                platform: str(data.platform, 16),
-                country: request.cf?.country,
-                isp: request.cf?.asOrganization,
-              }),
-            })
+            .fetch('https://stats/event', { method: 'POST', body: JSON.stringify(event) })
             .catch(() => {}),
         );
       }
