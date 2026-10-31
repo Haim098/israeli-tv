@@ -4,10 +4,23 @@ import { PlayerContainer } from './components/Player/PlayerContainer'
 import { ChannelGrid } from './components/Channels/ChannelGrid'
 import { useOrientationLock } from './hooks/useOrientationLock'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
+import { useRef, useState } from 'react'
+import { OrientationDebug } from './components/Layout/OrientationDebug'
 
 export default function App() {
   useOrientationLock()
   const online = useOnlineStatus()
+  // Five quick taps on the version open the screen-rotation debug panel.
+  const [orientationDebug, setOrientationDebug] = useState(false)
+  const taps = useRef<number[]>([])
+  const onVersionTap = () => {
+    const now = Date.now()
+    taps.current = [...taps.current.filter((t) => now - t < 2000), now]
+    if (taps.current.length >= 5) {
+      taps.current = []
+      setOrientationDebug((v) => !v)
+    }
+  }
 
   return (
     <AppShell>
@@ -33,8 +46,9 @@ export default function App() {
       <footer className="py-4 text-center text-xs text-white/30">
         Developed by Haim Raich
         <span className="mx-1.5 text-white/15">·</span>
-        <span dir="ltr" className="text-[10px] text-white/15">{__BUILD_ID__}</span>
+        <span dir="ltr" onClick={onVersionTap} className="select-none px-1 py-2 text-[10px] text-white/15">{__BUILD_ID__}</span>
       </footer>
+      {orientationDebug && <OrientationDebug onClose={() => setOrientationDebug(false)} />}
     </AppShell>
   )
 }
