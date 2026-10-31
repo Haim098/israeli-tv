@@ -232,7 +232,8 @@ async function doResolveKeshet12(): Promise<string> {
   const tokenData = JSON.parse(decrypt(tokenEncrypted, TOKEN_KEY))
 
   if (!tokenData.tickets?.length) {
-    throw new Error('No stream tickets available')
+    // Keep mako's own answer (e.g. a geo/entitlement refusal code) for the logs.
+    throw new Error('No stream tickets available: ' + JSON.stringify(tokenData).slice(0, 100))
   }
 
   const ticket = decodeURIComponent(tokenData.tickets[0].ticket)

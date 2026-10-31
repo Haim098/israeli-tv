@@ -1,4 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { reportCrash } from '../lib/telemetry'
+import { useTvStore } from '../stores/tvStore'
 
 interface Props {
   children: ReactNode
@@ -21,6 +23,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('App crashed:', error, info)
+    // Name the component that crashed: the minified stack alone is hard to read.
+    const component = /^\s*at (\S+)/.exec(info.componentStack ?? '')?.[1]
+    reportCrash(error, useTvStore.getState().currentChannel.id, 'render' + (component ? ` in ${component}` : ''))
   }
 
   render() {

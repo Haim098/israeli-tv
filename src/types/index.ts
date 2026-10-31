@@ -15,4 +15,10 @@ export interface Channel {
    * token was rejected mid-playback).
    */
   resolveUrl?: (force?: boolean) => Promise<string>
+  /**
+   * How many segments behind the live edge to play (the safety margin
+   * against network hiccups). Default 3. Set lower for channels with long
+   * segments, so every channel ends up roughly 12s+ behind live.
+   */
+  liveEdgeSegments?: number
 }
