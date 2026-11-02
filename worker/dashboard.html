@@ -243,7 +243,7 @@
 
   <section class="card kpi s3">
     <h2>שיא מחוברים היום</h2>
-    <div class="row"><div class="v" id="k-peak">–</div></div>
+    <div class="row"><div class="v" id="k-peak">–</div><svg class="bars" id="b-peak" viewBox="0 0 96 40" preserveAspectRatio="none"></svg></div>
     <div class="s" id="k-peak-s"></div>
   </section>
   <section class="card kpi s4">
@@ -277,6 +277,17 @@
   <section class="card s5">
     <h2>זמן צפייה לפי ערוץ <span class="hint" id="h-range2"></span></h2>
     <div id="watch-ch" class="chlist"></div>
+  </section>
+
+  <section class="card s12">
+    <h2>שיא מחוברים לאורך זמן <span class="hint" id="peak-hint"></span>
+      <span class="seg" role="group" aria-label="תצוגת שיא מחוברים">
+        <button type="button" data-peak="day" aria-pressed="true">ימים</button>
+        <button type="button" data-peak="month" aria-pressed="false">חודשים</button>
+      </span>
+    </h2>
+    <p class="note" id="peak-note"></p>
+    <div class="chart"><canvas id="c-peaks" aria-label="שיא מחוברים בו־זמנית לאורך זמן"></canvas></div>
   </section>
 
   <section class="card s4">
@@ -328,7 +339,7 @@
     <div class="scroll" id="events"></div>
   </section>
 </main>
-<footer>בלי כתובות IP ובלי פרטים אישיים: מזהה אקראי לכל דפדפן, מדינה, ספק אינטרנט וסוג מכשיר. נתונים נשמרים 45 יום.</footer>
+<footer>בלי כתובות IP ובלי פרטים אישיים: מזהה אקראי לכל דפדפן, מדינה, ספק אינטרנט וסוג מכשיר. פירוט נשמר 45 יום, סיכומים יומיים כשנה.</footer>
 </div>
 
 <script>
@@ -355,6 +366,9 @@ const secs = (ms) => (ms == null ? '' : ms >= 60000 ? Math.floor(ms / 60000) + '
 const mbps = (kbps) => (kbps == null ? '' : kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps');
 // A stable colour per viewer session, so one viewer's events are easy to spot.
 const sessColor = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return 'hsl(' + h + ' 65% 55%)'; };
+let peakView = 'day';
+try { if (localStorage.getItem('peakView') === 'month') peakView = 'month'; } catch (e) { /* storage blocked */ }
+const monthFmt = new Intl.DateTimeFormat('he-IL', { month: 'short', year: '2-digit', timeZone: 'UTC' });
 let evFilter = 'all';
 let evSession = null;
 const PLAT = { android: 'אנדרואיד', ios: 'אייפון / אייפד', desktop: 'מחשב', other: 'אחר' };
@@ -536,6 +550,13 @@ function render(d) {
 
   countTo('k-peak', Math.max(today.peak_online || 0, d.online));
   $('k-peak-s').innerHTML = '<span>אתמול ' + (yest.peak_online || 0) + '</span><span>· שיא צפייה היום ' + Math.max(today.peak_watching || 0, d.watching) + '</span>';
+  // Peaks per day: the year of past days from the server, today from the live counters.
+  const peak = {};
+  for (const r of d.peaks || []) (peak[r.day] = peak[r.day] || {})[r.key] = r.n;
+  for (const x in by) if (by[x].peak_online != null) peak[x] = { peak_online: by[x].peak_online, peak_watching: by[x].peak_watching || 0 };
+  peak[d.today] = { peak_online: Math.max(today.peak_online || 0, d.online), peak_watching: Math.max(today.peak_watching || 0, d.watching) };
+  miniBars('b-peak', lastDays(d.today, 14).map((x) => (peak[x] || {}).peak_online || 0));
+  renderPeaks(peak, d.today, P);
 
   const wToday = watchOf(today) + liveSecs;
   countTo('k-watch', wToday, (x) => fmtH(x));
@@ -713,6 +734,55 @@ function render(d) {
   $('upd').innerHTML = '<b>חי</b> · עודכן ' + secFmt.format(new Date(d.now));
   const ring = $('ring'); ring.classList.remove('run'); void ring.getBoundingClientRect(); ring.classList.add('run');
 }
+
+// ---- peak concurrent viewers over time (by day, or the highest day of each month) ----
+function renderPeaks(peak, todayDay, P) {
+  let labels, online, watching, titles;
+  if (peakView === 'month') {
+    const months = {};
+    for (const [day, v] of Object.entries(peak)) {
+      const m = day.slice(0, 7);
+      const cur = months[m] || (months[m] = { online: 0, watching: 0, day: day });
+      if ((v.peak_online || 0) > cur.online) { cur.online = v.peak_online || 0; cur.day = day; }
+      cur.watching = Math.max(cur.watching, v.peak_watching || 0);
+    }
+    const keys = Object.keys(months).sort().slice(-12);
+    labels = keys.map((m) => monthFmt.format(new Date(m + '-15T00:00:00Z')));
+    online = keys.map((m) => months[m].online);
+    watching = keys.map((m) => months[m].watching);
+    titles = keys.map((m) => monthFmt.format(new Date(m + '-15T00:00:00Z')) + ' · השיא ב-' + dayLabel(months[m].day));
+    $('peak-hint').textContent = 'היום העמוס בכל חודש';
+  } else {
+    const ds = lastDays(todayDay, range);
+    labels = ds.map(dayLabel);
+    online = ds.map((x) => (peak[x] || {}).peak_online || 0);
+    watching = ds.map((x) => (peak[x] || {}).peak_watching || 0);
+    titles = labels;
+    $('peak-hint').textContent = range + ' ימים';
+  }
+  // All-time record (as far back as the data goes).
+  let best = null;
+  for (const [day, v] of Object.entries(peak)) if (!best || (v.peak_online || 0) > best.n) best = { n: v.peak_online || 0, day };
+  $('peak-note').textContent = best && best.n
+    ? 'שיא כל הזמנים: ' + best.n + ' מחוברים בו־זמנית, ב-' + dayLabel(best.day) + (best.day === todayDay ? ' (היום!)' : '')
+    : 'עוד אין נתונים';
+  chart('c-peaks', { type: 'bar',
+    data: { labels, datasets: [
+      { label: 'שיא מחוברים', data: online, backgroundColor: P.clay, borderRadius: 6, borderSkipped: false, order: 2 },
+      { label: 'שיא צופים בשידור', data: watching, type: 'line', borderColor: P.live, backgroundColor: P.live,
+        tension: 0.35, pointRadius: 2.5, pointHoverRadius: 5, borderWidth: 2, order: 1 },
+    ] },
+    options: baseOpts(P, { scales: { x: axis(P, { grid: { display: false }, ticks: { color: P.faint, maxRotation: 0, autoSkip: true } }),
+      y: axis(P, { beginAtZero: true, ticks: { color: P.faint, precision: 0 } }) },
+      plugins: Object.assign(baseOpts(P).plugins, { tooltip: Object.assign(baseOpts(P).plugins.tooltip, { callbacks: { title: (it) => titles[it[0].dataIndex] } }) }) }) });
+}
+for (const b of document.querySelectorAll('.seg button[data-peak]')) b.addEventListener('click', () => {
+  peakView = b.dataset.peak;
+  try { localStorage.setItem('peakView', peakView); } catch (e) { /* storage blocked */ }
+  for (const x of document.querySelectorAll('.seg button[data-peak]')) x.setAttribute('aria-pressed', String(x === b));
+  if (full) render(full);
+});
+for (const b of document.querySelectorAll('.seg button[data-peak]')) b.setAttribute('aria-pressed', String(b.dataset.peak === peakView));
 
 // ---- recent problems table (filterable by kind, or by one viewer session) ----
 function renderEvents(d) {

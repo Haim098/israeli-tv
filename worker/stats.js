@@ -22,6 +22,10 @@
  */
 const TZ = 'Asia/Jerusalem';
 const KEEP_DAYS = 45;
+// Daily totals are tiny (a few dozen rows a day), so keep a year+ of them for
+// the long-term charts; per-event detail still goes after KEEP_DAYS.
+const DAILY_KEEP_DAYS = 400;
+const PEAK_HISTORY_DAYS = 365;
 const SESSION_GAP_MS = 30 * 60e3; // reconnect within this = same session
 const LAST_SEEN_STEP_MS = 5 * 60e3; // refresh "last seen" at most this often
 const FULL_CACHE_MS = 60e3;
@@ -54,6 +58,7 @@ export class Stats {
     this.peak = null; // { day, online, watching } cache of today's peaks
     this.alarmAt = 0;
     this.fullCache = null;
+    this.peakHistory = null; // { day, rows }: past days' peaks, rebuilt once a day
     ctx.blockConcurrencyWhile(async () => this.migrate());
     // Keep-alive pings from the app are answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
@@ -181,7 +186,7 @@ export class Stats {
     this.sql.exec('DELETE FROM timeline WHERE ts < ?', cutoff);
     this.sql.exec('DELETE FROM events WHERE ts < ?', cutoff);
     this.sql.exec('DELETE FROM seen WHERE day < ?', cutDay);
-    this.sql.exec('DELETE FROM daily WHERE day < ?', cutDay);
+    this.sql.exec('DELETE FROM daily WHERE day < ?', dayOf(now - DAILY_KEEP_DAYS * 86400e3));
   }
 
   // Counts a visit, unless this browser was here less than 30 minutes ago.
@@ -394,6 +399,23 @@ export class Stats {
     };
   }
 
+  // Peak online / watching for every past day of the last year. Past days
+  // don't change, so this is read once a day (reading a year of the daily
+  // table on every poll would eat the free plan's row reads); today's peak
+  // comes with the live counters.
+  peaksBefore(today, now) {
+    if (!this.peakHistory || this.peakHistory.day !== today) {
+      const rows = this.sql
+        .exec(
+          "SELECT day, key, n FROM daily WHERE day >= ? AND day < ? AND key IN ('peak_online', 'peak_watching')",
+          dayOf(now - PEAK_HISTORY_DAYS * 86400e3), today,
+        )
+        .toArray();
+      this.peakHistory = { day: today, rows };
+    }
+    return this.peakHistory.rows;
+  }
+
   // The 30-day history: polled every few minutes, memoized for a minute.
   fullSnapshot(now) {
     if (!this.fullCache || now - this.fullCache.at > FULL_CACHE_MS) {
@@ -412,7 +434,8 @@ export class Stats {
       const crashes = this.sql
         .exec(`SELECT ${EVENT_FIELDS} FROM events WHERE kind = 'crash' AND ts >= ? ORDER BY ts DESC LIMIT 100`, now - 30 * 86400e3)
         .toArray();
-      this.fullCache = { at: now, counters, timeline: before.concat(timeline), events, crashes };
+      const peaks = this.peaksBefore(dayOf(now), now);
+      this.fullCache = { at: now, counters, timeline: before.concat(timeline), events, crashes, peaks };
     }
     const viewers = this.viewers(now);
     return {
@@ -427,6 +450,7 @@ export class Stats {
       timeline: this.fullCache.timeline,
       events: this.fullCache.events,
       crashes: this.fullCache.crashes,
+      peaks: this.fullCache.peaks,
     };
   }
 }
